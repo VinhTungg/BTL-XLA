@@ -24,8 +24,14 @@ Cập nhật: 2026-09-15
 - DataLoader xử lý 3.200 query trong 7,506 giây trên CPU.
 - README đã được cập nhật theo trạng thái thực tế của project.
 
+## Nghiệm thu Người 2 - Tuần 1
+
+- Script trực quan hóa query và candidate đã được kiểm tra qua unit test trong [tests/test_visualize.py](../tests/test_visualize.py).
+- 1/1 test trực quan hóa đạt, chạy trong 0,386 giây.
+- Mô hình hiển thị được lưới query + candidates theo từng batch, với cột query ở đầu và các candidate kèm nhãn tương ứng.
+- Vấn đề môi trường ban đầu là gói package chưa được cài đặt; sau khi cài đặt editable package và dependency `viz`, kiểm tra chạy đúng.
+
 ## Việc tiếp theo
 
-1. Người 2 hoàn thành trực quan hóa query và candidates.
-2. Người 3 kiểm tra trực quan ít nhất 20 query và ghi nhận lỗi.
-3. Cả nhóm review chéo, sau đó chạy no-context baseline.
+1. Người 3 kiểm tra trực quan ít nhất 20 query và ghi nhận lỗi.
+2. Cả nhóm review chéo, sau đó chạy no-context baseline.
