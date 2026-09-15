@@ -1,10 +1,12 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.venv/
+.venv*/
+*.egg-info/
+.claude/
+.idea/
 data/
 checkpoints/
 outputs/
 runs/
 tmp/
-

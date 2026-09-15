@@ -62,9 +62,9 @@ Cấu hình ban đầu: `candidate_ratio=0.20`, `validation_size=5000`, `seed=42
 
 | Thành viên | Nhiệm vụ |
 |---|---|
-| Người 2 | Viết loader, transform train và transform validation/test |
-| Người 3 | Viết test cho kích thước ảnh, label, batch và augmentation |
-| Người 1 | Review API, tích hợp loader với skeleton TACS và bổ sung ví dụ sử dụng |
+| Người 1 | Viết loader, transform train và transform validation/test |
+| Người 2 | Viết test cho kích thước ảnh, label, batch và augmentation |
+| Người 3 | Review API, tích hợp loader với skeleton TACS và bổ sung ví dụ sử dụng |
 
 Transform train gồm random crop, horizontal flip, chuyển tensor và normalize. Validation/test không dùng augmentation ngẫu nhiên.
 
@@ -78,9 +78,9 @@ Transform train gồm random crop, horizontal flip, chuyển tensor và normaliz
 
 | Thành viên | Nhiệm vụ |
 |---|---|
-| Người 3 | Viết thuật toán chia dữ liệu phân tầng theo lớp và lưu index |
-| Người 1 | Viết test chống trùng và rò rỉ giữa query, candidate, validation và test |
-| Người 2 | Review cách chia, kiểm tra phân bố lớp và viết thống kê vào báo cáo |
+| Người 1 | Viết thuật toán chia dữ liệu phân tầng theo lớp và lưu index |
+| Người 2 | Viết test chống trùng và rò rỉ giữa query, candidate, validation và test |
+| Người 3 | Review cách chia, kiểm tra phân bố lớp và viết thống kê vào báo cáo |
 
 **Đầu ra:** Các tập index cố định theo seed và bảng thống kê dữ liệu.
 
@@ -92,9 +92,9 @@ Transform train gồm random crop, horizontal flip, chuyển tensor và normaliz
 
 | Thành viên | Nhiệm vụ |
 |---|---|
-| Người 3 | Viết sampler lấy `N` candidates cho mỗi query; ban đầu `N=8` |
-| Người 1 | Test index, shape, seed, query trùng candidate và batch cuối |
-| Người 2 | Ghép sampler với DataLoader và đưa một batch qua TACSModel |
+| Người 1 | Viết sampler lấy `N` candidates cho mỗi query; ban đầu `N=8` |
+| Người 2 | Test index, shape, seed, query trùng candidate và batch cuối |
+| Người 3 | Ghép sampler với DataLoader và đưa một batch qua TACSModel |
 
 Kích thước tensor dự kiến:
 

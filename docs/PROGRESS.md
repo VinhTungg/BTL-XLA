@@ -1,6 +1,6 @@
 # Tiến độ
 
-Cập nhật: 2026-09-11
+Cập nhật: 2026-09-15
 
 | Hạng mục | Trạng thái | Ghi chú |
 |---|---|---|
@@ -8,14 +8,24 @@ Cập nhật: 2026-09-11
 | Kiểm kê source | Xong | Không có code TACS chính thức trong workspace |
 | Phân tích dự án tham khảo | Xong | CLIP + Weaviate; không tái sử dụng cho lõi training |
 | Skeleton TACS | Xong | Selector, classifier, hybrid loss |
-| Unit test CPU | Xong | 3/3 test pass; smoke train chạy end-to-end |
+| Unit test CPU | Xong | 7/7 test pass; kiểm tra split, sampling, forward và gradient |
 | Giải thích TACS trong báo cáo | Xong | Có ví dụ, luồng xử lý, Gumbel và reward |
-| Dataset + baseline | Chưa làm | M1 |
+| Pipeline CIFAR-10 | Xong | Split 36.000/9.000/5.000/10.000; candidate sampling tái lập được |
+| Benchmark DataLoader | Xong | Môi trường sạch: 426,33 query/s trên CPU; RSS 773,31 MB |
+| Baseline huấn luyện thật | Chưa làm | Bước đầu của M2 |
 | Reproduction | Chưa làm | M2 |
 | Cải tiến two-stage | Chưa làm | M3 |
 
+## Nghiệm thu Người 1 - Tuần 1
+
+- Cài đặt thành công project trong môi trường `.venv-clean` từ hướng dẫn README.
+- 7/7 unit test đạt trong 0,205 giây.
+- Smoke training chạy đủ 5 bước; loss hữu hạn và gradient hoạt động.
+- DataLoader xử lý 3.200 query trong 7,506 giây trên CPU.
+- README đã được cập nhật theo trạng thái thực tế của project.
+
 ## Việc tiếp theo
 
-1. Chốt GPU và deadline.
-2. Thêm CIFAR loader/candidate pool và cấu hình thí nghiệm.
-3. Chạy no-context baseline trước.
+1. Người 2 hoàn thành trực quan hóa query và candidates.
+2. Người 3 kiểm tra trực quan ít nhất 20 query và ghi nhận lỗi.
+3. Cả nhóm review chéo, sau đó chạy no-context baseline.

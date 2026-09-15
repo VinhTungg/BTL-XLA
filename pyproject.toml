@@ -7,8 +7,17 @@ name = "tacs-improvement"
 version = "0.1.0"
 description = "Reproduction and improvement of Task-Aligned Context Selection"
 requires-python = ">=3.10"
-dependencies = ["torch>=2.2"]
+dependencies = [
+    "torch>=2.2",
+    "torchvision>=0.19",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Trực quan hóa batch (script của Người 3, Gói 5).
+viz = ["matplotlib>=3.8"]
+# Đo RSS của toàn tiến trình trong benchmark dữ liệu (Gói 5).
+dev = ["psutil>=5.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

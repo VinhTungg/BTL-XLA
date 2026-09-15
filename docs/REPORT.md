@@ -76,11 +76,19 @@ Giả thuyết: giữ được phần lớn lợi ích của TACS trong khi gi�
 
 ## 5. Thiết kế thực nghiệm
 
-Sẽ bổ sung dataset, split, backbone, hyperparameter, seed, metric và phần cứng sau M1.
+Dataset sử dụng là CIFAR-10 gồm 50.000 ảnh train và 10.000 ảnh test. Tập train được chia phân tầng theo lớp bằng seed 42 thành 36.000 query train, 9.000 candidate pool và 5.000 validation. Candidate pool tách rời query train và validation để tránh rò rỉ dữ liệu. Với mỗi query, pipeline hiện lấy 8 candidates theo cơ chế ngẫu nhiên có seed và thay đổi theo epoch nhưng vẫn tái lập được.
+
+Các thử nghiệm hiện chạy trên CPU. Backbone, batch size huấn luyện, learning rate và số epoch sẽ được chốt khi triển khai baseline huấn luyện thật.
 
 ## 6. Kết quả
 
-Chưa có kết quả huấn luyện thật.
+### 6.1 Nghiệm thu pipeline tuần 1
+
+Project được cài lại thành công trong một môi trường Python sạch. Toàn bộ 7 unit test đều đạt, bao gồm kiểm tra split, candidate sampling, kích thước tensor, forward pass và gradient từ hybrid loss về Selector. Smoke training chạy đủ 5 bước với loss hữu hạn.
+
+Benchmark DataLoader trong môi trường sạch trên CPU xử lý 3.200 query thuộc 50 batch trong 7,506 giây, tương đương 426,33 query/giây. Tiến trình sử dụng 773,31 MB RAM sau khi nạp CIFAR-10 và không tăng RSS trong quá trình duyệt 50 batch. Một lần chạy sau khi cache hệ điều hành được làm nóng đạt 1.280,56 query/giây, cho thấy kết quả tốc độ phụ thuộc đáng kể vào trạng thái cache. Vì vậy, các so sánh hiệu năng sau này phải dùng cùng quy trình warm-up và lấy trung bình nhiều lần chạy.
+
+Chưa có kết quả accuracy từ quá trình huấn luyện thật; đây là mục tiêu của giai đoạn baseline tiếp theo.
 
 ## 7. Thảo luận
 
