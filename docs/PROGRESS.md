@@ -1,6 +1,6 @@
 # Tiến độ
 
-Cập nhật: 2026-09-15
+Cập nhật: 2026-09-16
 
 | Hạng mục | Trạng thái | Ghi chú |
 |---|---|---|
@@ -23,6 +23,15 @@ Cập nhật: 2026-09-15
 - Smoke training chạy đủ 5 bước; loss hữu hạn và gradient hoạt động.
 - DataLoader xử lý 3.200 query trong 7,506 giây trên CPU.
 - README đã được cập nhật theo trạng thái thực tế của project.
+
+## Nghiệm thu Người 2 - Tuần 1
+
+- Đã thêm script trực quan hóa query và candidates tại `src/tacs/visualize_batch.py`.
+- Đã thêm unit test cho chức năng trực quan hóa tại `tests/test_visualize.py`.
+- Unit test kiểm tra lưới gồm query và 8 candidates cho mỗi query, tổng cộng 18 axes với 2 query.
+- Script hiển thị label query/candidate và lưu hình minh họa ra file PNG.
+- Đã chạy test visualization: `1/1` test đạt.
+- Phần kiểm thử dùng dữ liệu tổng hợp; việc tạo ảnh từ CIFAR-10 thật còn phụ thuộc dữ liệu CIFAR-10 đã tải đầy đủ.
 
 ## Việc tiếp theo
 
