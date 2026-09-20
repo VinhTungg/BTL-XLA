@@ -105,6 +105,7 @@ Remove-Item Env:PYTHONPATH
 
 - `docs/PROJECT_PLAN.md`: kế hoạch tổng thể.
 - `docs/WEEK_1_ASSIGNMENT.md`: phân công tuần 1.
+- `docs/WEEK_2_ASSIGNMENT.md`: phân công tuần 2 và chuỗi bàn giao baseline.
 - `docs/REPORT.md`: báo cáo kỹ thuật.
 - `docs/PROGRESS.md`: tiến độ dự án.
 - `docs/DECISIONS.md`: quyết định kỹ thuật.

@@ -1,20 +1,20 @@
 # Tiến độ
 
-Cập nhật: 2026-09-16
+Cập nhật: 2026-09-20
 
-| Hạng mục | Trạng thái | Ghi chú |
-|---|---|---|
-| Đọc và phân tích paper | Xong | Bản Anh là nguồn chuẩn |
-| Kiểm kê source | Xong | Không có code TACS chính thức trong workspace |
-| Phân tích dự án tham khảo | Xong | CLIP + Weaviate; không tái sử dụng cho lõi training |
-| Skeleton TACS | Xong | Selector, classifier, hybrid loss |
-| Unit test CPU | Xong | 7/7 test pass; kiểm tra split, sampling, forward và gradient |
-| Giải thích TACS trong báo cáo | Xong | Có ví dụ, luồng xử lý, Gumbel và reward |
-| Pipeline CIFAR-10 | Xong | Split 36.000/9.000/5.000/10.000; candidate sampling tái lập được |
-| Benchmark DataLoader | Xong | Môi trường sạch: 426,33 query/s trên CPU; RSS 773,31 MB |
-| Baseline huấn luyện thật | Chưa làm | Bước đầu của M2 |
-| Reproduction | Chưa làm | M2 |
-| Cải tiến two-stage | Chưa làm | M3 |
+| Hạng mục                      | Trạng thái | Ghi chú                                                          |
+| ----------------------------- | ---------- | ---------------------------------------------------------------- |
+| Đọc và phân tích paper        | Xong       | Bản Anh là nguồn chuẩn                                           |
+| Kiểm kê source                | Xong       | Không có code TACS chính thức trong workspace                    |
+| Phân tích dự án tham khảo     | Xong       | CLIP + Weaviate; không tái sử dụng cho lõi training              |
+| Skeleton TACS                 | Xong       | Selector, classifier, hybrid loss                                |
+| Unit test CPU                 | Xong       | 7/7 test pass; kiểm tra split, sampling, forward và gradient     |
+| Giải thích TACS trong báo cáo | Xong       | Có ví dụ, luồng xử lý, Gumbel và reward                          |
+| Pipeline CIFAR-10             | Xong       | Split 36.000/9.000/5.000/10.000; candidate sampling tái lập được |
+| Benchmark DataLoader          | Xong       | Môi trường sạch: 426,33 query/s trên CPU; RSS 773,31 MB          |
+| Baseline huấn luyện thật      | Chưa làm   | Bước đầu của M2                                                  |
+| Reproduction                  | Chưa làm   | M2                                                               |
+| Cải tiến two-stage            | Chưa làm   | M3                                                               |
 
 ## Nghiệm thu Người 1 - Tuần 1
 
@@ -35,6 +35,6 @@ Cập nhật: 2026-09-16
 
 ## Việc tiếp theo
 
-1. Người 2 hoàn thành trực quan hóa query và candidates.
-2. Người 3 kiểm tra trực quan ít nhất 20 query và ghi nhận lỗi.
-3. Cả nhóm review chéo, sau đó chạy no-context baseline.
+1. Hoàn tất và nghiệm thu phần trực quan hóa còn lại của tuần 1.
+2. Thực hiện tuần 2 theo `WEEK_2_ASSIGNMENT.md`.
+3. Xây hạ tầng thí nghiệm chung, sau đó lần lượt bàn giao No-context → Random-context → Similarity-context.
