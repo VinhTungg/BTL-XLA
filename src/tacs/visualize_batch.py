@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 import torch
 
 from .data import ContextDataset, build_cifar10
+from .device import configure_stdout
+
 
 
 def _denormalize_image(image: torch.Tensor) -> torch.Tensor:
@@ -115,6 +117,7 @@ def _sample_batch(
 
 def main() -> None:
     """Hiển thị hoặc lưu ảnh minh họa cho query và candidate."""
+    configure_stdout()
     parser = argparse.ArgumentParser(description="Hiển thị query + candidates cho TACS.")
     parser.add_argument("--root", type=str, default="data", help="Thư mục chứa CIFAR-10")
     parser.add_argument(

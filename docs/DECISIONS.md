@@ -16,3 +16,10 @@
 - Lọc top-k bằng embedding rẻ, sau đó rerank bằng task-aligned selector.
 - Đánh giá đồng thời accuracy, latency và memory.
 
+## ADR-004: Khóa encoder từ No-context cho Similarity Retrieval
+
+- Trạng thái: Đã chấp nhận và khóa trong Milestone M2.
+- Quyết định: Sau khi huấn luyện Baseline 1 (No-context), trích xuất trọng số của `TinyVisionEncoder` tại `outputs/no_context/best_encoder.pt` làm encoder chuẩn.
+- Lý do: Đảm bảo tính công bằng và nhất quán khi tiền tính toán embedding của Candidate Pool ($9.000$ mẫu) và tính toán Cosine Similarity cho Baseline 3, không bị data leakage sang test set.
+
+
