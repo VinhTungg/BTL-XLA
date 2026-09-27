@@ -33,8 +33,18 @@ Cập nhật: 2026-09-20
 - Đã chạy test visualization: `1/1` test đạt.
 - Phần kiểm thử dùng dữ liệu tổng hợp; việc tạo ảnh từ CIFAR-10 thật còn phụ thuộc dữ liệu CIFAR-10 đã tải đầy đủ.
 
+## Nghiệm thu Người 3 - Tuần 1
+
+- **Gói 1:** Viết script kiểm tra môi trường `scripts/check_env.py`, checklist nghiệm thu hệ thống và cẩm nang xử lý 5 lỗi thường gặp (PowerShell policy, ModuleNotFoundError, charmap UTF-8 console, CUDA fallback, DataLoader multiprocessing).
+- **Gói 2:** Hoàn thành review toàn diện API DataLoader (`build_cifar10`, `ContextDataset`, `cifar10_transforms`), xác nhận cấu trúc output dictionary và xây dựng code ví dụ sử dụng (Quickstart Recipe).
+- **Gói 3:** Review thuật toán chia phân tầng `stratified_split`, xây dựng bảng thống kê chi tiết 10 lớp trên 50.000 mẫu (Query 36.000, Candidate Pool 9.000, Val 5.000, Test 10.000), xác minh toán học không giao nhau giữa các tập (0% rò rỉ dữ liệu).
+- **Gói 4:** Viết script `scripts/verify_tacs_pipeline.py`, ghép thành công `ContextDataset` với `DataLoader` và đưa 1 batch qua `TACSModel`; kiểm tra tensor shape, one-hot selection weights qua Gumbel-Softmax, tính `TACSLoss` và backward gradients về Selector đạt 6/6 tham số.
+- **Gói 5:** Viết script `scripts/inspect_20_queries.py`, thực hiện kiểm tra trực quan chi tiết 20 query (160 ảnh candidates), lưu ảnh minh họa tại `docs/visual_inspection_20_queries.png`. Xác nhận 0/20 query bị rò rỉ dữ liệu, 100% ảnh đạt dải giá trị chuẩn `[0.00, 1.00]`.
+- **Gói 6:** Xuất bản tài liệu tổng hợp trung tâm `docs/BAO_CAO_TIEN_DO_TUAN_1.md` báo cáo toàn diện kết quả kỹ thuật của cả 3 thành viên và thiết lập quy chuẩn báo cáo tuần của dự án.
+
 ## Việc tiếp theo
 
-1. Hoàn tất và nghiệm thu phần trực quan hóa còn lại của tuần 1.
-2. Thực hiện tuần 2 theo `WEEK_2_ASSIGNMENT.md`.
-3. Xây hạ tầng thí nghiệm chung, sau đó lần lượt bàn giao No-context → Random-context → Similarity-context.
+1. Cả nhóm nghiệm thu chéo toàn bộ kết quả Tuần 1 (trực quan hóa và audit 20 query).
+2. Bước sang Tuần 2 (Milestone M2) theo kế hoạch phân công chi tiết tại `WEEK_2_ASSIGNMENT.md`.
+3. Xây dựng hạ tầng thí nghiệm chung, sau đó lần lượt triển khai và bàn giao 3 baseline: No-context → Random-context → Similarity-context.
+

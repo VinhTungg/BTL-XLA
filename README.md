@@ -109,3 +109,4 @@ Remove-Item Env:PYTHONPATH
 - `docs/REPORT.md`: báo cáo kỹ thuật.
 - `docs/PROGRESS.md`: tiến độ dự án.
 - `docs/DECISIONS.md`: quyết định kỹ thuật.
+- `docs/BAO_CAO_TIEN_DO_TUAN_1.md`: báo cáo tiến độ và nghiệm thu toàn diện Tuần 1.
