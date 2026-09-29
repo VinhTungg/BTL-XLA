@@ -12,29 +12,20 @@ Cập nhật: 2026-09-20
 | Giải thích TACS trong báo cáo | Xong       | Có ví dụ, luồng xử lý, Gumbel và reward                          |
 | Pipeline CIFAR-10             | Xong       | Split 36.000/9.000/5.000/10.000; candidate sampling tái lập được |
 | Benchmark DataLoader          | Xong       | Môi trường sạch: 426,33 query/s trên CPU; RSS 773,31 MB          |
-| Baseline huấn luyện thật      | Chưa làm   | Bước đầu của M2                                                  |
-| Reproduction                  | Chưa làm   | M2                                                               |
-| Cải tiến two-stage            | Chưa làm   | M3                                                               |
+| Baseline huấn luyện thật      | Xong       | Hoàn thành 3 baseline: No-context, Random, Similarity (M2)       |
+| Reproduction                  | Chưa làm   | Trọng tâm Tuần 3 (M3)                                            |
+| Cải tiến two-stage            | Chưa làm   | Tuần 4 (M4)                                                      |
 
-## Nghiệm thu Người 1 - Tuần 1
+## Nghiệm thu Tuần 2 - Milestone M2 (3 Baseline Đối sánh)
 
-- Cài đặt thành công project trong môi trường `.venv-clean` từ hướng dẫn README.
-- 7/7 unit test đạt trong 0,205 giây.
-- Smoke training chạy đủ 5 bước; loss hữu hạn và gradient hoạt động.
-- DataLoader xử lý 3.200 query trong 7,506 giây trên CPU.
-- README đã được cập nhật theo trạng thái thực tế của project.
-
-## Nghiệm thu Người 2 - Tuần 1
-
-- Đã thêm script trực quan hóa query và candidates tại `src/tacs/visualize_batch.py`.
-- Đã thêm unit test cho chức năng trực quan hóa tại `tests/test_visualize.py`.
-- Unit test kiểm tra lưới gồm query và 8 candidates cho mỗi query, tổng cộng 18 axes với 2 query.
-- Script hiển thị label query/candidate và lưu hình minh họa ra file PNG.
-- Đã chạy test visualization: `1/1` test đạt.
-- Phần kiểm thử dùng dữ liệu tổng hợp; việc tạo ảnh từ CIFAR-10 thật còn phụ thuộc dữ liệu CIFAR-10 đã tải đầy đủ.
+- **Người 1:** Xây dựng hạ tầng huấn luyện chung [src/tacs/train.py](file:///e:/BTL-XLA/src/tacs/train.py), CLI chọn baseline, hệ thống quản lý checkpoint và module trích xuất đặc trưng & Cosine Similarity Retrieval [src/tacs/retrieval.py](file:///e:/BTL-XLA/src/tacs/retrieval.py).
+- **Người 2:** Viết bộ kiểm thử hạ tầng [tests/test_baselines.py](file:///e:/BTL-XLA/tests/test_baselines.py), triển khai mô hình chung [src/tacs/baselines.py](file:///e:/BTL-XLA/src/tacs/baselines.py), huấn luyện No-context và khóa encoder chuẩn tại `outputs/no_context/best_encoder.pt`.
+- **Người 3:** Xây dựng Random-context trên `ContextDataset`, tích hợp `SimilarityContextDataset`, huấn luyện Similarity-context, xây dựng script phân tích [scripts/analyze_baselines.py](file:///e:/BTL-XLA/scripts/analyze_baselines.py), vẽ biểu đồ [docs/baseline_comparison_curves.png](file:///e:/BTL-XLA/docs/baseline_comparison_curves.png) và xuất bản báo cáo chi tiết [docs/BAO_CAO_TIEN_DO_TUAN_2.md](file:///e:/BTL-XLA/docs/BAO_CAO_TIEN_DO_TUAN_2.md).
+- **Hệ thống kiểm thử:** Đạt **18/18 unit tests pass 100%**.
 
 ## Việc tiếp theo
 
-1. Hoàn tất và nghiệm thu phần trực quan hóa còn lại của tuần 1.
-2. Thực hiện tuần 2 theo `WEEK_2_ASSIGNMENT.md`.
-3. Xây hạ tầng thí nghiệm chung, sau đó lần lượt bàn giao No-context → Random-context → Similarity-context.
+1. Chuyển sang Tuần 3 (Milestone M3 - TACS Reproduction).
+2. Xây dựng vòng lặp huấn luyện phối hợp: tối ưu Selector bằng Gumbel-Softmax + Policy Gradient REINFORCE và Classifier bằng Cross-Entropy Task Loss.
+3. Thực hiện nghiên cứu thực nghiệm bóc tách (Ablation Study) và so sánh hiệu quả với 3 baseline Tuần 2.
+
