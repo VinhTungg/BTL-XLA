@@ -10,6 +10,7 @@ from tacs.model import TinyVisionEncoder
 from tacs.retrieval import (
     CosineSimilarityRetriever,
     SimilarityContextDataset,
+    TopKContextDataset,
     extract_normalized_features,
     precompute_candidate_embeddings,
 )
@@ -69,6 +70,78 @@ class RetrievalTest(unittest.TestCase):
 
             self.assertTrue(torch.allclose(scores, manual_best_scores, atol=1e-5))
             self.assertTrue(torch.equal(positions, manual_best_pos))
+
+    def test_retrieve_topk_matches_manual_ranking(self) -> None:
+        candidate_embeddings = torch.tensor(
+            [[1.0, 0.0], [0.8, 0.6], [0.3, 0.9539392], [-0.2, 0.9797959]]
+        )
+        candidate_indices = torch.tensor([10, 11, 12, 13])
+        retriever = CosineSimilarityRetriever(
+            candidate_embeddings,
+            candidate_indices,
+            torch.tensor([0, 1, 2, 3]),
+        )
+
+        scores, positions, indices = retriever.retrieve_topk(
+            torch.tensor([[1.0, 0.0]]),
+            top_k=3,
+        )
+
+        self.assertTrue(torch.equal(positions, torch.tensor([[0, 1, 2]])))
+        self.assertTrue(torch.equal(indices, torch.tensor([[10, 11, 12]])))
+        self.assertTrue(torch.allclose(scores, torch.tensor([[1.0, 0.8, 0.3]]), atol=1e-5))
+
+    def test_retrieve_topk_caps_to_candidate_pool_and_rejects_nonpositive_k(self) -> None:
+        retriever = CosineSimilarityRetriever(
+            torch.eye(2),
+            torch.tensor([4, 5]),
+            torch.tensor([0, 1]),
+        )
+        scores, positions, indices = retriever.retrieve_topk(torch.tensor([[1.0, 0.0]]), top_k=5)
+        self.assertEqual(scores.shape, (1, 2))
+        self.assertEqual(positions.shape, (1, 2))
+        self.assertEqual(indices.shape, (1, 2))
+
+        for invalid_top_k in (0, -1):
+            with self.subTest(top_k=invalid_top_k):
+                with self.assertRaises(ValueError):
+                    retriever.retrieve_topk(torch.tensor([[1.0, 0.0]]), top_k=invalid_top_k)
+
+    def test_topk_context_dataset_batches_candidates_for_tacs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cached = precompute_candidate_embeddings(
+                candidate_dataset=self.candidate_dataset,
+                encoder=self.encoder,
+                output_path=Path(tmp_dir) / "candidate_embeddings.pt",
+            )
+            retriever = CosineSimilarityRetriever(
+                candidate_embeddings=cached["embeddings"],
+                candidate_indices=torch.arange(self.num_candidates),
+                candidate_targets=self.candidate_dataset.tensors[1],
+                candidate_dataset=self.candidate_dataset,
+            )
+            query_dataset = TensorDataset(
+                torch.randn(3, 3, 32, 32),
+                torch.randint(0, 10, (3,)),
+            )
+
+            dataset = TopKContextDataset(
+                query_dataset=query_dataset,
+                candidate_dataset=self.candidate_dataset,
+                retriever=retriever,
+                encoder=self.encoder,
+                batch_size=2,
+                top_k=4,
+            )
+            batch = next(iter(DataLoader(dataset, batch_size=2)))
+
+            self.assertEqual(batch["candidates"].shape, (2, 4, 3, 32, 32))
+            self.assertEqual(batch["candidate_indices"].shape, (2, 4))
+            self.assertEqual(batch["candidate_targets"].shape, (2, 4))
+            self.assertEqual(batch["similarity_scores"].shape, (2, 4))
+            self.assertTrue(
+                torch.all(batch["similarity_scores"][:, :-1] >= batch["similarity_scores"][:, 1:])
+            )
 
     def test_similarity_context_dataset_structure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

@@ -127,6 +127,22 @@ class CosineSimilarityRetriever:
         orig_indices = self.candidate_indices[best_positions]
         return best_scores.cpu(), best_positions.cpu(), orig_indices.cpu()
 
+    def retrieve_topk(
+        self,
+        query_embeddings: Tensor,
+        top_k: int = 32,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Truy xuất top-k ứng viên có Cosine Similarity cao nhất cho mỗi query."""
+        if top_k <= 0:
+            raise ValueError(f"top_k phải > 0, nhận {top_k}")
+
+        query_embeddings = query_embeddings.float().to(self.candidate_embeddings.device)
+        sim_matrix = torch.matmul(query_embeddings, self.candidate_embeddings.T)
+        top_k = min(top_k, sim_matrix.shape[-1])
+        top_scores, top_positions = torch.topk(sim_matrix, k=top_k, dim=-1)
+        orig_indices = self.candidate_indices[top_positions]
+        return top_scores.cpu(), top_positions.cpu(), orig_indices.cpu()
+
 
 class SimilarityContextDataset(Dataset):
     """Dataset kết hợp Query với ứng viên Similarity-context được truy xuất trước."""
@@ -210,4 +226,104 @@ class SimilarityContextDataset(Dataset):
             "candidate_indices": torch.tensor([cand_orig_idx], dtype=torch.long),
             "candidate_targets": torch.tensor([cand_target], dtype=torch.long),
             "similarity_scores": torch.tensor([sim_score], dtype=torch.float32),
+        }
+
+
+class TopKContextDataset(Dataset):
+    """Dataset trả về top-k candidate được chọn bởi cosine similarity để làm đầu vào cho reranker."""
+
+    def __init__(
+        self,
+        query_dataset: Dataset,
+        candidate_dataset: Dataset,
+        retriever: CosineSimilarityRetriever,
+        encoder: nn.Module | None = None,
+        device: torch.device | str = "cpu",
+        batch_size: int = 128,
+        top_k: int = 32,
+    ) -> None:
+        self.query_dataset = query_dataset
+        self.candidate_dataset = candidate_dataset
+        self.retriever = retriever
+        self.top_k = max(1, top_k)
+        self.cached_assignments: list[list[tuple[int, float]]] = []
+        if encoder is not None:
+            self._precompute_assignments(encoder, device=device, batch_size=batch_size)
+
+    def _precompute_assignments(
+        self,
+        encoder: nn.Module,
+        device: torch.device | str = "cpu",
+        batch_size: int = 128,
+    ) -> None:
+        device = torch.device(device)
+        encoder = encoder.to(device)
+        encoder.eval()
+
+        loader = DataLoader(
+            self.query_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=0,
+        )
+
+        assignments: list[list[tuple[int, float]]] = []
+        with torch.no_grad():
+            for images, _ in loader:
+                images = images.to(device)
+                q_embs = extract_normalized_features(encoder, images)
+                scores, positions, _ = self.retriever.retrieve_topk(q_embs, top_k=self.top_k)
+                for batch_idx in range(scores.shape[0]):
+                    batch_assignments: list[tuple[int, float]] = []
+                    for pos, sc in zip(positions[batch_idx].tolist(), scores[batch_idx].tolist()):
+                        batch_assignments.append((int(pos), float(sc)))
+                    assignments.append(batch_assignments)
+
+        self.cached_assignments = assignments
+
+    def __len__(self) -> int:
+        return len(self.query_dataset)
+
+    def __getitem__(self, index: int) -> dict[str, Tensor]:
+        query_image, query_target = self.query_dataset[index]
+
+        if self.cached_assignments:
+            ranked = self.cached_assignments[index]
+        else:
+            ranked = [(0, 0.0)]
+
+        selected_positions = [pos for pos, _ in ranked[: self.top_k]]
+        selected_scores = [score for _, score in ranked[: self.top_k]]
+
+        candidate_images = []
+        candidate_indices = []
+        candidate_targets = []
+        for pos in selected_positions:
+            cand_image, cand_target = self.candidate_dataset[pos]
+            if isinstance(self.candidate_dataset, Subset):
+                candidate_indices.append(self.candidate_dataset.indices[pos])
+            else:
+                candidate_indices.append(pos)
+            candidate_targets.append(cand_target)
+            candidate_images.append(cand_image)
+
+        if not candidate_images:
+            candidate_images.append(self.candidate_dataset[0][0])
+            candidate_indices.append(0)
+            candidate_targets.append(self.candidate_dataset[0][1])
+
+        candidate_tensor = torch.stack(candidate_images)
+        if isinstance(self.query_dataset, Subset):
+            query_orig_idx = self.query_dataset.indices[index]
+        else:
+            query_orig_idx = index
+
+        return {
+            "query": query_image,
+            "candidates": candidate_tensor,
+            "target": torch.as_tensor(query_target, dtype=torch.long),
+            "query_index": torch.tensor(query_orig_idx, dtype=torch.long),
+            "candidate_indices": torch.tensor(candidate_indices, dtype=torch.long),
+            "candidate_targets": torch.tensor(candidate_targets, dtype=torch.long),
+            "similarity_scores": torch.tensor(selected_scores, dtype=torch.float32),
         }

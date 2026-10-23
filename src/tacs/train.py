@@ -23,10 +23,11 @@ from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset
 from .baselines import BaselineModel
 from .data import ContextDataset, build_cifar10
 from .device import configure_stdout, resolve_device
-from .model import TinyVisionEncoder
+from .model import TACSModel, TinyVisionEncoder
 from .retrieval import (
     CosineSimilarityRetriever,
     SimilarityContextDataset,
+    TopKContextDataset,
     precompute_candidate_embeddings,
 )
 
@@ -48,6 +49,7 @@ class ExperimentConfig:
     split_file: str = "data/splits/cifar10_seed42.json"
     output_dir: str = "outputs/no_context"
     standard_encoder_path: str = "outputs/no_context/best_encoder.pt"
+    topk_candidates: int = 32
     dry_run: bool = False
     num_workers: int = 0
     eval_test: bool = False
@@ -207,6 +209,74 @@ def build_dataloaders(
             device=device,
             batch_size=config.batch_size,
         )
+
+    elif config.baseline in {"tacs", "two_stage"}:
+        encoder = TinyVisionEncoder(config.embedding_dim).to(device)
+        if config.standard_encoder_path and Path(config.standard_encoder_path).exists():
+            state = torch.load(config.standard_encoder_path, map_location=device, weights_only=True)
+            encoder.load_state_dict(state)
+        encoder.eval()
+
+        cache_dir = Path(config.output_dir).parent / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / "candidate_pool_embeddings.pt"
+        if not cache_file.exists():
+            precompute_candidate_embeddings(
+                candidate_dataset=candidate_pool,
+                encoder=encoder,
+                batch_size=config.batch_size,
+                device=device,
+                output_path=cache_file,
+            )
+
+        retriever = CosineSimilarityRetriever.from_cache(cache_file, candidate_dataset=candidate_pool)
+        if config.baseline == "two_stage":
+            train_ds = TopKContextDataset(
+                query_dataset=query_train,
+                candidate_dataset=candidate_pool,
+                retriever=retriever,
+                encoder=encoder,
+                device=device,
+                batch_size=config.batch_size,
+                top_k=min(config.topk_candidates, len(candidate_pool)),
+            )
+            val_ds = TopKContextDataset(
+                query_dataset=validation,
+                candidate_dataset=candidate_pool,
+                retriever=retriever,
+                encoder=encoder,
+                device=device,
+                batch_size=config.batch_size,
+                top_k=min(config.topk_candidates, len(candidate_pool)),
+            )
+            test_ds = TopKContextDataset(
+                query_dataset=test_set,
+                candidate_dataset=candidate_pool,
+                retriever=retriever,
+                encoder=encoder,
+                device=device,
+                batch_size=config.batch_size,
+                top_k=min(config.topk_candidates, len(candidate_pool)),
+            )
+        else:
+            train_ds = ContextDataset(
+                query_dataset=query_train,
+                candidate_dataset=candidate_pool,
+                num_candidates=min(config.topk_candidates, len(candidate_pool)),
+                seed=config.seed,
+            )
+            val_ds = ContextDataset(
+                query_dataset=validation,
+                candidate_dataset=candidate_pool,
+                num_candidates=min(config.topk_candidates, len(candidate_pool)),
+                seed=config.seed,
+            )
+            test_ds = ContextDataset(
+                query_dataset=test_set,
+                candidate_dataset=candidate_pool,
+                num_candidates=min(config.topk_candidates, len(candidate_pool)),
+                seed=config.seed,
+            )
     else:
         raise ValueError(f"Unknown baseline: {config.baseline}")
 
@@ -257,7 +327,7 @@ def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    criterion: nn.Module,
+    criterion: Any,
     device: torch.device,
 ) -> dict[str, float]:
     """Huấn luyện 1 epoch."""
@@ -276,12 +346,14 @@ def train_one_epoch(
 
         optimizer.zero_grad()
         logits = model(query, candidates)
-        loss = criterion(logits, target)
+        loss_value = criterion(logits, target)
+        loss = loss_value.total if hasattr(loss_value, "total") else loss_value
         loss.backward()
         optimizer.step()
 
         total_loss += loss.item() * query.size(0)
-        preds = logits.argmax(dim=-1)
+        pred_logits = logits.context_logits if hasattr(logits, "context_logits") else logits
+        preds = pred_logits.argmax(dim=-1)
         correct += (preds == target).sum().item()
         total += query.size(0)
 
@@ -301,7 +373,7 @@ def train_one_epoch(
 def evaluate(
     model: nn.Module,
     loader: DataLoader,
-    criterion: nn.Module,
+    criterion: Any,
     device: torch.device,
 ) -> dict[str, float]:
     """Đánh giá mô hình (không cập nhật gradient)."""
@@ -320,10 +392,12 @@ def evaluate(
                 candidates = candidates.to(device)
 
             logits = model(query, candidates)
-            loss = criterion(logits, target)
+            loss_value = criterion(logits, target)
+            loss = loss_value.total if hasattr(loss_value, "total") else loss_value
 
             total_loss += loss.item() * query.size(0)
-            preds = logits.argmax(dim=-1)
+            pred_logits = logits.context_logits if hasattr(logits, "context_logits") else logits
+            preds = pred_logits.argmax(dim=-1)
             correct += (preds == target).sum().item()
             total += query.size(0)
 
@@ -352,18 +426,27 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
 
     train_loader, val_loader, test_loader, candidate_pool = build_dataloaders(config, device)
 
-    model = BaselineModel(
-        num_classes=config.num_classes,
-        embedding_dim=config.embedding_dim,
-        baseline_type=config.baseline,
-    ).to(device)
+    if config.baseline in {"tacs", "two_stage"}:
+        model = TACSModel(num_classes=config.num_classes, embedding_dim=config.embedding_dim).to(device)
+
+        def tacs_criterion(outputs, targets):
+            from .losses import TACSLoss
+            return TACSLoss()(outputs, targets)
+
+        criterion = tacs_criterion
+    else:
+        model = BaselineModel(
+            num_classes=config.num_classes,
+            embedding_dim=config.embedding_dim,
+            baseline_type=config.baseline,
+        ).to(device)
+        criterion = nn.CrossEntropyLoss()
 
     optimizer = torch.optim.Adam(
         model.parameters(),
         lr=config.lr,
         weight_decay=config.weight_decay,
     )
-    criterion = nn.CrossEntropyLoss()
 
     best_val_acc = -1.0
     history: list[dict[str, Any]] = []
@@ -414,7 +497,8 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             torch.save(checkpoint_data, out_dir / "checkpoint_best.pt")
 
             # Lưu encoder chuẩn (đặc biệt quan trọng ở No-context cho Gói 2)
-            torch.save(model.encoder.state_dict(), out_dir / "best_encoder.pt")
+            encoder = model.selector.encoder if isinstance(model, TACSModel) else model.encoder
+            torch.save(encoder.state_dict(), out_dir / "best_encoder.pt")
 
     total_time = round(time.perf_counter() - total_train_start, 2)
 
@@ -444,13 +528,13 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
 
 
 def parse_args() -> ExperimentConfig:
-    parser = argparse.ArgumentParser(description="CLI Huấn luyện 3 Baseline Tuần 2.")
+    parser = argparse.ArgumentParser(description="CLI Huấn luyện baseline và mô hình TACS.")
     parser.add_argument(
         "--baseline",
         type=str,
         default="no_context",
-        choices=["no_context", "random", "similarity"],
-        help="Loại baseline cần chạy",
+        choices=["no_context", "random", "similarity", "tacs", "two_stage"],
+        help="Loại baseline hoặc mô hình cần chạy",
     )
     parser.add_argument("--epochs", type=int, default=5, help="Số epochs")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
@@ -461,10 +545,19 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--split-file", type=str, default="data/splits/cifar10_seed42.json")
     parser.add_argument("--output-dir", type=str, default=None, help="Thư mục xuất kết quả")
     parser.add_argument("--standard-encoder", type=str, default="outputs/no_context/best_encoder.pt")
+    parser.add_argument(
+        "--topk-candidates",
+        type=int,
+        default=32,
+        help="Số candidate đầu vào cho TACS/Two-Stage",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Chạy kiểm thử ngắn 1 epoch batch nhỏ")
     parser.add_argument("--eval-test", action="store_true", help="Đánh giá test set sau khi hoàn thành")
 
     args = parser.parse_args()
+    if args.topk_candidates <= 0:
+        parser.error("--topk-candidates phải lớn hơn 0")
+
     out = args.output_dir if args.output_dir else f"outputs/{args.baseline}"
     return ExperimentConfig(
         baseline=args.baseline,
@@ -477,6 +570,7 @@ def parse_args() -> ExperimentConfig:
         split_file=args.split_file,
         output_dir=out,
         standard_encoder_path=args.standard_encoder,
+        topk_candidates=args.topk_candidates,
         dry_run=args.dry_run,
         eval_test=args.eval_test,
     )

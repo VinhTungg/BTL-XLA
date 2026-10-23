@@ -6,6 +6,7 @@ from .model import TACSModel, TACSOutput, TinyVisionEncoder
 from .retrieval import (
     CosineSimilarityRetriever,
     SimilarityContextDataset,
+    TopKContextDataset,
     precompute_candidate_embeddings,
 )
 
@@ -27,6 +28,7 @@ __all__ = [
     "BaselineModel",
     "CosineSimilarityRetriever",
     "SimilarityContextDataset",
+    "TopKContextDataset",
     "precompute_candidate_embeddings",
     "ExperimentConfig",
     "run_experiment",
