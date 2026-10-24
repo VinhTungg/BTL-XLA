@@ -8,7 +8,7 @@ from itertools import islice
 import torch
 from torch.utils.data import DataLoader
 
-from tacs.data import ContextDataset, build_cifar10
+from tacs.data import ContextDataset, build_cifar
 from tacs.device import (
     configure_stdout,
     dataloader_defaults,
@@ -46,6 +46,13 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         choices=("auto", "cpu", "cuda"),
     )
+    parser.add_argument(
+        "--dataset",
+        default="cifar10",
+        choices=("cifar10", "cifar100"),
+    )
+    parser.add_argument("--data-root", default="data")
+    parser.add_argument("--split-file", default=None)
 
     return parser.parse_args()
 
@@ -57,9 +64,11 @@ def main() -> None:
     args = parse_args()
     device = resolve_device(args.device)
 
-    datasets = build_cifar10(
-        root="data",
-        split_file="data/splits/cifar10_seed42.json",
+    split_file = args.split_file or f"data/splits/{args.dataset}_seed42.json"
+    datasets = build_cifar(
+        args.dataset,
+        root=args.data_root,
+        split_file=split_file,
     )
 
     context_dataset = ContextDataset(

@@ -1,6 +1,6 @@
 # TACS Improvement Project
 
-Tái hiện và cải tiến **Task-Aligned Context Selection (TACS)** cho bài toán phân loại ảnh CIFAR-10.
+Tái hiện và cải tiến **Task-Aligned Context Selection (TACS)** cho bài toán phân loại ảnh CIFAR-10 và CIFAR-100.
 
 TACS học cách chọn ảnh tham chiếu hữu ích cho ảnh truy vấn. Ảnh được chọn không nhất thiết giống ảnh truy vấn nhất, mà phải giúp mô hình downstream phân loại chính xác hơn.
 
@@ -40,15 +40,16 @@ Thiết lập đường dẫn source:
 $env:PYTHONPATH="src"
 ```
 
-## Tải CIFAR-10
+## Tải CIFAR-10 hoặc CIFAR-100
 
 Chỉ cần chạy một lần:
 
 ```powershell
 python -c "from tacs.data import build_cifar10; build_cifar10('data', 'data/splits/cifar10_seed42.json', download=True)"
+python -c "from tacs.data import build_cifar100; build_cifar100('data', 'data/splits/cifar100_seed42.json', download=True)"
 ```
 
-Dữ liệu được chia cố định bằng seed 42:
+Cả hai bộ dữ liệu có 50.000 ảnh train và được chia cố định bằng seed 42:
 
 - 36.000 ảnh query train.
 - 9.000 ảnh candidate pool.
@@ -68,9 +69,16 @@ dữ liệu thật được tắt mặc định và chỉ chạy khi đặt
 
 ## Chế độ dữ liệu của trainer
 
-Trainer mặc định luôn dùng CIFAR-10 thật và sẽ dừng với thông báo lỗi
-nếu không nạp được dữ liệu. `--dry-run` chỉ giới hạn số mẫu và số epoch;
-nó vẫn đọc CIFAR-10 thật. Trainer không còn chế độ dữ liệu mock.
+Trainer mặc định dùng CIFAR-10 thật; thêm `--dataset cifar100` để
+chạy CIFAR-100 thật. `num_classes`, file split, output directory và standard
+encoder được chọn theo dataset. `--dry-run` chỉ giới hạn số mẫu và số
+epoch; nó vẫn đọc dữ liệu thật. Trainer không còn chế độ dữ liệu mock.
+
+Ví dụ smoke run trên CIFAR-100:
+
+```powershell
+python -m tacs.train --dataset cifar100 --baseline no_context --dry-run --device cpu
+```
 
 Mỗi `metrics.json` ghi rõ `data.source`, kích thước các tập và hash của
 file split để xác minh kết quả được tạo từ đúng dữ liệu.
@@ -79,7 +87,7 @@ file split để xác minh kết quả được tạo từ đúng dữ liệu.
 
 Phải train `no_context` trước khi chạy `similarity` hoặc `two_stage`.
 Hai mode retrieval chỉ chấp nhận `best_encoder.pt` có metadata xác nhận
-baseline `no_context`, CIFAR-10 và đúng `embedding_dim`. Checkpoint cũ không có
+baseline `no_context`, đúng dataset và đúng `embedding_dim`. Checkpoint cũ không có
 provenance sẽ bị từ chối và cần train lại.
 
 Cache candidate embedding được kiểm tra bằng hash của split, danh sách
@@ -163,7 +171,7 @@ Remove-Item Env:PYTHONPATH
 
 - `src/tacs/model.py`: Selector và mạng phân loại.
 - `src/tacs/losses.py`: task loss và policy loss.
-- `src/tacs/data.py`: CIFAR-10, split và candidate sampling.
+- `src/tacs/data.py`: CIFAR-10/CIFAR-100, split và candidate sampling.
 - `src/tacs/device.py`: thiết bị và seed.
 - `src/tacs/bench_data.py`: benchmark pipeline dữ liệu.
 - `tests/`: unit test.

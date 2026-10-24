@@ -12,15 +12,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
 
-from .data import ContextDataset, build_cifar10
+from .data import CIFAR_NORMALIZATION, ContextDataset, build_cifar, normalize_cifar_name
 from .device import configure_stdout
 
 
 
-def _denormalize_image(image: torch.Tensor) -> torch.Tensor:
+def _denormalize_image(
+    image: torch.Tensor,
+    dataset_name: str = "cifar10",
+) -> torch.Tensor:
     """Chuyển ảnh từ chuẩn hóa CIFAR về dạng [0, 1] để hiển thị."""
-    mean = torch.tensor([0.4914, 0.4822, 0.4465], dtype=image.dtype)
-    std = torch.tensor([0.2470, 0.2435, 0.2616], dtype=image.dtype)
+    mean_values, std_values = CIFAR_NORMALIZATION[normalize_cifar_name(dataset_name)]
+    mean = torch.tensor(mean_values, dtype=image.dtype)
+    std = torch.tensor(std_values, dtype=image.dtype)
     return torch.clamp(image * std[:, None, None] + mean[:, None, None], 0.0, 1.0)
 
 
@@ -28,6 +32,7 @@ def make_context_grid(
     batch: Mapping[str, torch.Tensor],
     num_queries: int | None = None,
     figsize: tuple[float, float] | None = None,
+    dataset_name: str = "cifar10",
 ) -> plt.Figure:
     """Vẽ lưới query + candidates cho một batch.
 
@@ -63,7 +68,7 @@ def make_context_grid(
     candidate_labels = batch.get("candidate_targets")
 
     for row in range(num_queries):
-        query_image = _denormalize_image(query[row].detach().cpu())
+        query_image = _denormalize_image(query[row].detach().cpu(), dataset_name)
         query_image = query_image.permute(1, 2, 0).numpy()
 
         axes[row, 0].imshow(query_image)
@@ -74,7 +79,9 @@ def make_context_grid(
         axes[row, 0].axis("off")
 
         for col in range(num_candidates):
-            candidate_image = _denormalize_image(candidates[row, col].detach().cpu())
+            candidate_image = _denormalize_image(
+                candidates[row, col].detach().cpu(), dataset_name
+            )
             candidate_image = candidate_image.permute(1, 2, 0).numpy()
             axis = axes[row, col + 1]
             axis.imshow(candidate_image)
@@ -94,12 +101,13 @@ def make_context_grid(
 def _sample_batch(
     root: str | Path,
     split_file: str | Path,
+    dataset_name: str = "cifar10",
     batch_size: int = 4,
     num_candidates: int = 8,
     seed: int = 42,
 ) -> dict[str, torch.Tensor]:
     """Lấy một batch mẫu từ CIFAR-10 và candidate pool."""
-    datasets = build_cifar10(root=root, split_file=split_file)
+    datasets = build_cifar(dataset_name, root=root, split_file=split_file)
     context_dataset = ContextDataset(
         query_dataset=datasets.query_train,
         candidate_dataset=datasets.candidate_pool,
@@ -119,11 +127,12 @@ def main() -> None:
     """Hiển thị hoặc lưu ảnh minh họa cho query và candidate."""
     configure_stdout()
     parser = argparse.ArgumentParser(description="Hiển thị query + candidates cho TACS.")
+    parser.add_argument("--dataset", choices=("cifar10", "cifar100"), default="cifar10")
     parser.add_argument("--root", type=str, default="data", help="Thư mục chứa CIFAR-10")
     parser.add_argument(
         "--split-file",
         type=str,
-        default="data/splits/cifar10_seed42.json",
+        default=None,
         help="Đường dẫn file split",
     )
     parser.add_argument("--batch-size", type=int, default=4, help="Số query trên một batch")
@@ -137,15 +146,21 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    split_file = args.split_file or f"data/splits/{args.dataset}_seed42.json"
     batch = _sample_batch(
         root=args.root,
-        split_file=args.split_file,
+        split_file=split_file,
+        dataset_name=args.dataset,
         batch_size=args.batch_size,
         num_candidates=args.num_candidates,
         seed=args.seed,
     )
 
-    fig = make_context_grid(batch, num_queries=args.batch_size)
+    fig = make_context_grid(
+        batch,
+        num_queries=args.batch_size,
+        dataset_name=args.dataset,
+    )
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=200, bbox_inches="tight")

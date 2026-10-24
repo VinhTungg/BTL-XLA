@@ -10,6 +10,39 @@ import torch
 from torch.utils.data import Dataset, Subset
 
 
+CIFAR_NUM_CLASSES = {
+    "cifar10": 10,
+    "cifar100": 100,
+}
+
+CIFAR_NORMALIZATION = {
+    "cifar10": (
+        (0.4914, 0.4822, 0.4465),
+        (0.2470, 0.2435, 0.2616),
+    ),
+    "cifar100": (
+        (0.5071, 0.4867, 0.4408),
+        (0.2675, 0.2565, 0.2761),
+    ),
+}
+
+
+def normalize_cifar_name(dataset_name: str) -> str:
+    """Return the canonical name used in configs, metadata, and split files."""
+
+    normalized = dataset_name.lower().replace("-", "").replace("_", "")
+    if normalized not in CIFAR_NUM_CLASSES:
+        supported = ", ".join(sorted(CIFAR_NUM_CLASSES))
+        raise ValueError(
+            f"Dataset không được hỗ trợ: {dataset_name!r}. Chọn: {supported}."
+        )
+    return normalized
+
+
+def cifar_num_classes(dataset_name: str) -> int:
+    return CIFAR_NUM_CLASSES[normalize_cifar_name(dataset_name)]
+
+
 @dataclass(frozen=True)
 class SplitIndices:
     """Các index thuộc 3 tập con của tập train"""
@@ -18,8 +51,22 @@ class SplitIndices:
     candidate_pool: list[int]
     validation: list[int]
     seed: int
+    dataset: str | None = None
+    dataset_size: int | None = None
 
-    def validate(self, dataset_size: int) -> None:
+    def validate(self, dataset_size: int, dataset_name: str | None = None) -> None:
+        if self.dataset_size is not None and self.dataset_size != dataset_size:
+            raise ValueError(
+                f"Split được tạo cho {self.dataset_size} mẫu, "
+                f"không phải {dataset_size} mẫu"
+            )
+        if dataset_name is not None and self.dataset is not None:
+            expected_dataset = normalize_cifar_name(dataset_name)
+            if normalize_cifar_name(self.dataset) != expected_dataset:
+                raise ValueError(
+                    f"Split thuộc {self.dataset}, không thể dùng cho {expected_dataset}"
+                )
+
         query = set(self.query_train)
         candidate = set(self.candidate_pool)
         validation = set(self.validation)
@@ -84,6 +131,8 @@ class SplitIndices:
             candidate_pool=content["candidate_pool"],
             validation=content["validation"],
             seed=content["seed"],
+            dataset=content.get("dataset"),
+            dataset_size=content.get("dataset_size"),
         )
 
 
@@ -93,6 +142,7 @@ def stratified_split(
         validation_size: int = 5_000,
         candidate_ratio: float = 0.20,
         seed: int = 42,
+        dataset_name: str | None = None,
 ) -> SplitIndices:
     """Chia tập train theo lớp thành query, candidate và validation.
 
@@ -197,19 +247,21 @@ def stratified_split(
         candidate_pool=candidate_indices,
         validation=validation_indices,
         seed=seed,
+        dataset=(normalize_cifar_name(dataset_name) if dataset_name else None),
+        dataset_size=dataset_size,
     )
 
     split.validate(dataset_size)
 
     return split
 
-def cifar10_transforms():
-    """Tạo transform dành cho train và evaluation."""
+def cifar_transforms(dataset_name: str = "cifar10"):
+    """Create train/evaluation transforms with dataset-specific statistics."""
 
     from torchvision import transforms
 
-    mean = (0.4914, 0.4822, 0.4465)
-    std = (0.2470, 0.2435, 0.2616)
+    normalized_name = normalize_cifar_name(dataset_name)
+    mean, std = CIFAR_NORMALIZATION[normalized_name]
 
     train_transform = transforms.Compose(
         [
@@ -238,15 +290,95 @@ def cifar10_transforms():
 
     return train_transform, evaluation_transform
 
+
+def cifar10_transforms():
+    """Backward-compatible CIFAR-10 transform helper."""
+
+    return cifar_transforms("cifar10")
+
 @dataclass
-class CIFAR10Datasets:
-    """Bốn tập dữ liệu sử dụng trong thí nghiệm."""
+class CIFARDatasets:
+    """Four real-data subsets used by a CIFAR experiment."""
 
     query_train: Dataset
     candidate_pool: Dataset
     validation: Dataset
     test: Dataset
     split: SplitIndices
+    dataset_name: str
+    num_classes: int
+
+
+# Keep the public name used by earlier project code.
+CIFAR10Datasets = CIFARDatasets
+
+
+def build_cifar(
+    dataset_name: str,
+    root: str | Path,
+    split_file: str | Path,
+    validation_size: int = 5_000,
+    candidate_ratio: float = 0.20,
+    seed: int = 42,
+    download: bool = False,
+) -> CIFARDatasets:
+    """Build real CIFAR-10 or CIFAR-100 query/pool/validation/test subsets."""
+
+    from torchvision.datasets import CIFAR10, CIFAR100
+
+    normalized_name = normalize_cifar_name(dataset_name)
+    dataset_class = CIFAR10 if normalized_name == "cifar10" else CIFAR100
+    train_transform, evaluation_transform = cifar_transforms(normalized_name)
+
+    raw_train = dataset_class(root=str(root), train=True, download=download)
+    split_path = Path(split_file)
+
+    if split_path.exists():
+        split = SplitIndices.load(split_path)
+        if split.dataset is None and normalized_name != "cifar10":
+            raise ValueError(
+                "Split legacy không có metadata dataset; không thể dùng an toàn "
+                f"cho {normalized_name}. Hãy dùng một --split-file mới."
+            )
+        split.validate(len(raw_train), normalized_name)
+    else:
+        split = stratified_split(
+            labels=raw_train.targets,
+            validation_size=validation_size,
+            candidate_ratio=candidate_ratio,
+            seed=seed,
+            dataset_name=normalized_name,
+        )
+        split.save(split_path)
+
+    augmented_train = dataset_class(
+        root=str(root),
+        train=True,
+        transform=train_transform,
+        download=False,
+    )
+    evaluation_train = dataset_class(
+        root=str(root),
+        train=True,
+        transform=evaluation_transform,
+        download=False,
+    )
+    test_dataset = dataset_class(
+        root=str(root),
+        train=False,
+        transform=evaluation_transform,
+        download=download,
+    )
+
+    return CIFARDatasets(
+        query_train=Subset(augmented_train, split.query_train),
+        candidate_pool=Subset(evaluation_train, split.candidate_pool),
+        validation=Subset(evaluation_train, split.validation),
+        test=test_dataset,
+        split=split,
+        dataset_name=normalized_name,
+        num_classes=cifar_num_classes(normalized_name),
+    )
 
 def build_cifar10(
     root: str | Path,
@@ -257,71 +389,35 @@ def build_cifar10(
     download: bool = False,
 ) -> CIFAR10Datasets:
     """Tạo bốn tập CIFAR-10 dùng trong dự án."""
-
-    from torchvision.datasets import CIFAR10
-
-    train_transform, evaluation_transform = (
-        cifar10_transforms()
+    return build_cifar(
+        "cifar10",
+        root,
+        split_file,
+        validation_size,
+        candidate_ratio,
+        seed,
+        download,
     )
 
-    # Dataset này chỉ dùng để lấy danh sách nhãn.
-    raw_train = CIFAR10(
-        root=str(root),
-        train=True,
-        download=download,
-    )
 
-    split_path = Path(split_file)
+def build_cifar100(
+    root: str | Path,
+    split_file: str | Path,
+    validation_size: int = 5_000,
+    candidate_ratio: float = 0.20,
+    seed: int = 42,
+    download: bool = False,
+) -> CIFARDatasets:
+    """Build the real CIFAR-100 subsets used by paper-aligned experiments."""
 
-    if split_path.exists():
-        split = SplitIndices.load(split_path)
-        split.validate(len(raw_train))
-    else:
-        split = stratified_split(
-            labels=raw_train.targets,
-            validation_size=validation_size,
-            candidate_ratio=candidate_ratio,
-            seed=seed,
-        )
-
-        split.save(split_path)
-
-    augmented_train = CIFAR10(
-        root=str(root),
-        train=True,
-        transform=train_transform,
-        download=False,
-    )
-
-    evaluation_train = CIFAR10(
-        root=str(root),
-        train=True,
-        transform=evaluation_transform,
-        download=False,
-    )
-
-    test_dataset = CIFAR10(
-        root=str(root),
-        train=False,
-        transform=evaluation_transform,
-        download=download,
-    )
-
-    return CIFAR10Datasets(
-        query_train=Subset(
-            augmented_train,
-            split.query_train,
-        ),
-        candidate_pool=Subset(
-            evaluation_train,
-            split.candidate_pool,
-        ),
-        validation=Subset(
-            evaluation_train,
-            split.validation,
-        ),
-        test=test_dataset,
-        split=split,
+    return build_cifar(
+        "cifar100",
+        root,
+        split_file,
+        validation_size,
+        candidate_ratio,
+        seed,
+        download,
     )
 
 class ContextDataset(Dataset):

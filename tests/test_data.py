@@ -7,9 +7,12 @@ from torch.utils.data import DataLoader, Subset, TensorDataset
 
 from tacs import TACSLoss, TACSModel
 from tacs.data import (
+    CIFAR_NORMALIZATION,
     ContextDataset,
     FullPoolContextDataset,
     SplitIndices,
+    cifar_num_classes,
+    normalize_cifar_name,
     stratified_split,
 )
 
@@ -115,6 +118,35 @@ class StratifiedSplitTest(unittest.TestCase):
             loaded.validate(
                 dataset_size=len(self.labels)
             )
+
+    def test_cifar100_split_has_expected_sizes_and_provenance(self) -> None:
+        labels = [label for label in range(100) for _ in range(500)]
+        split = stratified_split(
+            labels=labels,
+            validation_size=5_000,
+            candidate_ratio=0.20,
+            seed=42,
+            dataset_name="CIFAR-100",
+        )
+
+        self.assertEqual(len(split.query_train), 36_000)
+        self.assertEqual(len(split.candidate_pool), 9_000)
+        self.assertEqual(len(split.validation), 5_000)
+        self.assertEqual(split.dataset, "cifar100")
+        self.assertEqual(split.dataset_size, 50_000)
+        split.validate(50_000, "cifar100")
+        with self.assertRaisesRegex(ValueError, "không thể dùng"):
+            split.validate(50_000, "cifar10")
+
+    def test_cifar_dataset_metadata_is_canonical(self) -> None:
+        self.assertEqual(normalize_cifar_name("CIFAR-100"), "cifar100")
+        self.assertEqual(cifar_num_classes("cifar100"), 100)
+        self.assertNotEqual(
+            CIFAR_NORMALIZATION["cifar10"],
+            CIFAR_NORMALIZATION["cifar100"],
+        )
+        with self.assertRaisesRegex(ValueError, "không được hỗ trợ"):
+            normalize_cifar_name("imagenet")
 
 
 class ContextDatasetTest(unittest.TestCase):

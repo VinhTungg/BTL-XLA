@@ -60,6 +60,19 @@ class TrainingInfrastructureTest(unittest.TestCase):
             loaded = ExperimentConfig.load(cfg_path)
             self.assertEqual(orig, loaded)
 
+    def test_cifar100_config_derives_safe_dataset_defaults(self) -> None:
+        config = ExperimentConfig(dataset="cifar100", baseline="tacs", seed=7)
+
+        self.assertEqual(config.num_classes, 100)
+        self.assertEqual(config.split_file, "data/splits/cifar100_seed42.json")
+        self.assertEqual(config.output_dir, "outputs/cifar100/tacs")
+        self.assertEqual(
+            config.standard_encoder_path,
+            "outputs/cifar100/no_context/best_encoder.pt",
+        )
+        with self.assertRaisesRegex(ValueError, "num_classes=100"):
+            ExperimentConfig(dataset="cifar100", num_classes=10)
+
     def test_validation_does_not_update_gradients(self) -> None:
         model = BaselineModel(num_classes=5, embedding_dim=16)
         images = torch.randn(8, 3, 32, 32)
@@ -216,6 +229,40 @@ class TrainingInfrastructureTest(unittest.TestCase):
         self.assertEqual(data_info["effective_sizes"]["query_train"], 16)
         self.assertEqual(data_info["effective_sizes"]["validation"], 8)
         self.assertEqual(data_info["split_sha256"], sha256(split_content).hexdigest())
+
+    def test_cifar100_uses_real_dataset_route_and_records_provenance(self) -> None:
+        generator = torch.Generator().manual_seed(11)
+
+        def dataset(size: int) -> TensorDataset:
+            return TensorDataset(
+                torch.randn(size, 3, 32, 32, generator=generator),
+                torch.randint(0, 100, (size,), generator=generator),
+            )
+
+        fake_cifar100 = SimpleNamespace(
+            query_train=dataset(20),
+            candidate_pool=dataset(10),
+            validation=dataset(12),
+            test=dataset(14),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            split_path = Path(tmp_dir) / "cifar100_split.json"
+            split_path.write_text('{"dataset": "cifar100"}', encoding="utf-8")
+            config = ExperimentConfig(
+                dataset="cifar100",
+                baseline="no_context",
+                dry_run=True,
+                split_file=str(split_path),
+                output_dir=str(Path(tmp_dir) / "output"),
+            )
+            with patch("tacs.train.build_cifar100", return_value=fake_cifar100) as builder:
+                *_, data_info = build_dataloaders(config, torch.device("cpu"))
+
+        builder.assert_called_once()
+        self.assertEqual(config.num_classes, 100)
+        self.assertEqual(data_info["source"], "cifar100")
+        self.assertEqual(data_info["effective_sizes"]["query_train"], 16)
 
 
 if __name__ == "__main__":

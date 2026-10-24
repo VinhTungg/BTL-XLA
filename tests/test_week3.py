@@ -240,6 +240,19 @@ class TACSLoopTest(unittest.TestCase):
         self.assertEqual(config.selector_temperature, 0.1)
         self.assertEqual(config.policy_weight, 1.0)
 
+    def test_cli_derives_cifar100_paths_and_class_count(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            ["tacs.train", "--dataset", "cifar100", "--baseline", "tacs"],
+        ):
+            config = parse_args()
+
+        self.assertEqual(config.dataset, "cifar100")
+        self.assertEqual(config.num_classes, 100)
+        self.assertEqual(config.split_file, "data/splits/cifar100_seed42.json")
+        self.assertEqual(config.output_dir, "outputs/cifar100/tacs")
+
     def test_cli_parses_and_validates_tacs_objective_options(self) -> None:
         with patch.object(
             sys,

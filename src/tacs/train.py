@@ -21,7 +21,14 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .baselines import BaselineModel
-from .data import ContextDataset, FullPoolContextDataset, build_cifar10
+from .data import (
+    ContextDataset,
+    FullPoolContextDataset,
+    build_cifar10,
+    build_cifar100,
+    cifar_num_classes,
+    normalize_cifar_name,
+)
 from .device import configure_stdout, resolve_device
 from .metrics import PeakMemoryMonitor
 from .model import TACSModel, TinyVisionEncoder
@@ -42,18 +49,19 @@ class ExperimentConfig:
     """Cấu hình thí nghiệm tuần 2."""
 
     baseline: str = "no_context"
+    dataset: str = "cifar10"
     seed: int = 42
     epochs: int = 5
     batch_size: int = 64
     lr: float = 1e-3
     weight_decay: float = 1e-4
     embedding_dim: int = 64
-    num_classes: int = 10
+    num_classes: int | None = None
     device: str = "auto"
     data_root: str = "data"
-    split_file: str = "data/splits/cifar10_seed42.json"
-    output_dir: str = "outputs/no_context"
-    standard_encoder_path: str = "outputs/no_context/best_encoder.pt"
+    split_file: str | None = None
+    output_dir: str | None = None
+    standard_encoder_path: str | None = None
     topk_candidates: int = 32
     selector_temperature: float = 0.1
     policy_weight: float = 1.0
@@ -62,6 +70,26 @@ class ExperimentConfig:
     eval_test: bool = False
     max_train_samples: int | None = None
     max_val_samples: int | None = None
+
+    def __post_init__(self) -> None:
+        self.dataset = normalize_cifar_name(self.dataset)
+        expected_classes = cifar_num_classes(self.dataset)
+        if self.num_classes is None:
+            self.num_classes = expected_classes
+        elif self.num_classes != expected_classes:
+            raise ValueError(
+                f"{self.dataset} requires num_classes={expected_classes}, "
+                f"received {self.num_classes}"
+            )
+
+        if self.split_file is None:
+            self.split_file = f"data/splits/{self.dataset}_seed42.json"
+        if self.output_dir is None:
+            base = "outputs" if self.dataset == "cifar10" else f"outputs/{self.dataset}"
+            self.output_dir = f"{base}/{self.baseline}"
+        if self.standard_encoder_path is None:
+            base = "outputs" if self.dataset == "cifar10" else f"outputs/{self.dataset}"
+            self.standard_encoder_path = f"{base}/no_context/best_encoder.pt"
 
     def save(self, path: str | Path) -> None:
         p = Path(path)
@@ -100,11 +128,12 @@ def _load_standard_encoder(
     device: torch.device,
     expected_split_sha256: str | None = None,
 ) -> tuple[TinyVisionEncoder, Path, str]:
+    dataset_label = config.dataset.replace("cifar", "CIFAR-")
     encoder_path = Path(config.standard_encoder_path)
     if not encoder_path.is_file():
         raise RuntimeError(
             "Similarity/Two-Stage yêu cầu standard encoder đã huấn luyện trên "
-            f"CIFAR-10, nhưng không tìm thấy: {encoder_path}"
+            f"{dataset_label}, nhưng không tìm thấy: {encoder_path}"
         )
 
     payload = torch.load(encoder_path, map_location=device, weights_only=True)
@@ -124,7 +153,7 @@ def _load_standard_encoder(
         or metadata.get("schema_version") != ENCODER_CHECKPOINT_SCHEMA_VERSION
         or metadata.get("baseline") != "no_context"
         or metadata.get("embedding_dim") != config.embedding_dim
-        or data_metadata.get("source") != "cifar10"
+        or data_metadata.get("source") != config.dataset
         or (
             expected_split_sha256 is not None
             and data_metadata.get("split_sha256") != expected_split_sha256
@@ -132,7 +161,7 @@ def _load_standard_encoder(
     ):
         raise RuntimeError(
             f"Standard encoder {encoder_path} không khớp schema, baseline, "
-            "embedding_dim hoặc provenance CIFAR-10."
+            f"embedding_dim hoặc provenance {config.dataset}."
         )
 
     full_sizes = data_metadata.get("full_sizes", {})
@@ -165,13 +194,13 @@ def _embedding_cache_metadata(
 ) -> dict[str, Any]:
     return {
         "schema_version": EMBEDDING_CACHE_SCHEMA_VERSION,
-        "dataset": "cifar10",
+        "dataset": config.dataset,
         "split_sha256": split_sha256,
         "candidate_count": len(candidate_pool),
         "candidate_indices_sha256": _candidate_indices_sha256(candidate_pool),
         "encoder_sha256": encoder_sha256,
         "embedding_dim": config.embedding_dim,
-        "transform": "cifar10-evaluation-v1",
+        "transform": f"{config.dataset}-evaluation-v1",
         "normalization": "l2",
     }
 
@@ -224,16 +253,18 @@ def build_dataloaders(
 ) -> tuple[DataLoader, DataLoader, DataLoader | None, Dataset, dict[str, Any]]:
     """Khởi tạo DataLoader tương ứng với từng baseline."""
     torch.manual_seed(config.seed)
+    dataset_label = config.dataset.replace("cifar", "CIFAR-")
 
     try:
-        datasets = build_cifar10(
+        dataset_builder = build_cifar10 if config.dataset == "cifar10" else build_cifar100
+        datasets = dataset_builder(
             root=config.data_root,
             split_file=config.split_file,
             download=False,
         )
     except Exception as error:
         raise RuntimeError(
-            "Không thể nạp CIFAR-10. Lần chạy đã dừng trước khi "
+            f"Không thể nạp {dataset_label}. Lần chạy đã dừng trước khi "
             "tạo output. Hãy kiểm tra --data-root và --split-file."
         ) from error
 
@@ -475,7 +506,7 @@ def build_dataloaders(
         }
 
     data_info = {
-        "source": "cifar10",
+        "source": config.dataset,
         "data_root": config.data_root,
         "split_file": config.split_file,
         "split_sha256": split_sha256,
@@ -960,15 +991,22 @@ def parse_args() -> ExperimentConfig:
         choices=["no_context", "random", "similarity", "tacs", "two_stage"],
         help="Loại baseline hoặc mô hình cần chạy",
     )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="cifar10",
+        choices=["cifar10", "cifar100"],
+        help="Bộ dữ liệu thật dùng cho thí nghiệm",
+    )
     parser.add_argument("--epochs", type=int, default=5, help="Số epochs")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
-    parser.add_argument("--data-root", type=str, default="data", help="Đường dẫn CIFAR-10")
-    parser.add_argument("--split-file", type=str, default="data/splits/cifar10_seed42.json")
+    parser.add_argument("--data-root", type=str, default="data", help="Thư mục dữ liệu CIFAR")
+    parser.add_argument("--split-file", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default=None, help="Thư mục xuất kết quả")
-    parser.add_argument("--standard-encoder", type=str, default="outputs/no_context/best_encoder.pt")
+    parser.add_argument("--standard-encoder", type=str, default=None)
     parser.add_argument(
         "--topk-candidates",
         type=int,
@@ -1003,9 +1041,9 @@ def parse_args() -> ExperimentConfig:
     if args.policy_weight < 0:
         parser.error("--policy-weight không được âm")
 
-    out = args.output_dir if args.output_dir else f"outputs/{args.baseline}"
     return ExperimentConfig(
         baseline=args.baseline,
+        dataset=args.dataset,
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
@@ -1013,7 +1051,7 @@ def parse_args() -> ExperimentConfig:
         device=args.device,
         data_root=args.data_root,
         split_file=args.split_file,
-        output_dir=out,
+        output_dir=args.output_dir,
         standard_encoder_path=args.standard_encoder,
         topk_candidates=args.topk_candidates,
         selector_temperature=args.selector_temperature,

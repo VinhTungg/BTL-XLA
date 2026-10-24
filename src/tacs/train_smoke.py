@@ -3,7 +3,7 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 
-from .data import ContextDataset, build_cifar10
+from .data import ContextDataset, build_cifar, cifar_num_classes, normalize_cifar_name
 from .device import configure_stdout, resolve_device, seed_everything
 from .losses import TACSLoss
 from .model import TACSModel
@@ -11,9 +11,10 @@ from .model import TACSModel
 
 def run(
     steps: int,
+    dataset: str = "cifar10",
     seed: int = 7,
     data_root: str = "data",
-    split_file: str = "data/splits/cifar10_seed42.json",
+    split_file: str | None = None,
     batch_size: int = 4,
     num_candidates: int = 5,
     device_name: str = "auto",
@@ -22,7 +23,15 @@ def run(
     configure_stdout()
     generator = seed_everything(seed)
     device = resolve_device(device_name)
-    datasets = build_cifar10(root=data_root, split_file=split_file, download=False)
+    dataset = normalize_cifar_name(dataset)
+    split_file = split_file or f"data/splits/{dataset}_seed42.json"
+    datasets = build_cifar(
+        dataset,
+        root=data_root,
+        split_file=split_file,
+        seed=42,
+        download=False,
+    )
     context_dataset = ContextDataset(
         query_dataset=datasets.query_train,
         candidate_dataset=datasets.candidate_pool,
@@ -37,7 +46,7 @@ def run(
         generator=generator,
     )
 
-    model = TACSModel(num_classes=10, embedding_dim=32).to(device)
+    model = TACSModel(num_classes=cifar_num_classes(dataset), embedding_dim=32).to(device)
     objective = TACSLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     batches = iter(loader)
@@ -64,15 +73,17 @@ def run(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Smoke training TACS trên CIFAR-10 thật.")
     parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument("--dataset", choices=("cifar10", "cifar100"), default="cifar10")
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--data-root", type=str, default="data")
-    parser.add_argument("--split-file", type=str, default="data/splits/cifar10_seed42.json")
+    parser.add_argument("--split-file", type=str, default=None)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--num-candidates", type=int, default=5)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     args = parser.parse_args()
     run(
         steps=args.steps,
+        dataset=args.dataset,
         seed=args.seed,
         data_root=args.data_root,
         split_file=args.split_file,
