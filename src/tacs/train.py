@@ -468,7 +468,8 @@ def build_dataloaders(
             "strategy": "cosine_topk_then_tacs",
             "retrieval_candidates_scanned": len(candidate_pool),
             "selector_candidates": min(config.topk_candidates, len(candidate_pool)),
-            "candidate_bank_refresh": "per_batch_topk_candidates",
+            "candidate_bank_refresh": "once_per_train_or_evaluation_epoch",
+            "candidate_batch_representation": "topk_indices_into_shared_embedding_bank",
             "candidate_bank_gradient": False,
             "retrieval_cache": "validated_standard_encoder_embedding_cache",
         }
@@ -531,15 +532,15 @@ def _encode_full_candidate_bank(
     return torch.cat(embeddings, dim=0)
 
 
-def _full_candidate_bank_for_loader(
+def _candidate_bank_for_loader(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
 ) -> torch.Tensor | None:
-    if not isinstance(loader.dataset, FullPoolContextDataset):
+    if not isinstance(loader.dataset, (FullPoolContextDataset, TopKContextDataset)):
         return None
     if not isinstance(model, TACSModel):
-        raise TypeError("FullPoolContextDataset yêu cầu TACSModel")
+        raise TypeError("Candidate embedding bank yêu cầu TACSModel")
     return _encode_full_candidate_bank(
         model,
         loader.dataset.candidate_dataset,
@@ -558,7 +559,7 @@ def _train_one_epoch_impl(
     """Huấn luyện 1 epoch."""
     model.train()
     selection_started_at = time.perf_counter()
-    full_candidate_bank = _full_candidate_bank_for_loader(model, loader, device)
+    candidate_bank = _candidate_bank_for_loader(model, loader, device)
     runtime_selection_time = time.perf_counter() - selection_started_at
     loop_started_at = time.perf_counter()
     total_loss = 0.0
@@ -573,8 +574,13 @@ def _train_one_epoch_impl(
             candidates = candidates.to(device)
 
         optimizer.zero_grad()
-        if full_candidate_bank is not None:
-            logits = model.forward_embedding_bank(query, full_candidate_bank)
+        if candidate_bank is not None:
+            candidate_embeddings = candidate_bank
+            if isinstance(batch, dict) and "candidate_positions" in batch:
+                candidate_embeddings = candidate_bank[
+                    batch["candidate_positions"].to(device)
+                ]
+            logits = model.forward_embedding_bank(query, candidate_embeddings)
         else:
             logits = model(query, candidates)
         loss_value = criterion(logits, target)
@@ -591,7 +597,7 @@ def _train_one_epoch_impl(
     model_time = time.perf_counter() - loop_started_at
     selection_time = (
         runtime_selection_time
-        if full_candidate_bank is not None
+        if candidate_bank is not None
         else float(getattr(loader.dataset, "precompute_time_s", 0.0))
     )
     actual_time = model_time + runtime_selection_time
@@ -637,7 +643,7 @@ def _evaluate_impl(
     """Đánh giá mô hình (không cập nhật gradient)."""
     model.eval()
     selection_started_at = time.perf_counter()
-    full_candidate_bank = _full_candidate_bank_for_loader(model, loader, device)
+    candidate_bank = _candidate_bank_for_loader(model, loader, device)
     runtime_selection_time = time.perf_counter() - selection_started_at
     loop_started_at = time.perf_counter()
     total_loss = 0.0
@@ -652,8 +658,13 @@ def _evaluate_impl(
             if candidates is not None:
                 candidates = candidates.to(device)
 
-            if full_candidate_bank is not None:
-                logits = model.forward_embedding_bank(query, full_candidate_bank)
+            if candidate_bank is not None:
+                candidate_embeddings = candidate_bank
+                if isinstance(batch, dict) and "candidate_positions" in batch:
+                    candidate_embeddings = candidate_bank[
+                        batch["candidate_positions"].to(device)
+                    ]
+                logits = model.forward_embedding_bank(query, candidate_embeddings)
             else:
                 logits = model(query, candidates)
             loss_value = criterion(logits, target)
@@ -668,7 +679,7 @@ def _evaluate_impl(
     model_time = time.perf_counter() - loop_started_at
     selection_time = (
         runtime_selection_time
-        if full_candidate_bank is not None
+        if candidate_bank is not None
         else float(getattr(loader.dataset, "precompute_time_s", 0.0))
     )
     actual_time = model_time + runtime_selection_time

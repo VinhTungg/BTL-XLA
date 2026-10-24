@@ -294,7 +294,12 @@ class SimilarityContextDataset(Dataset):
 
 
 class TopKContextDataset(Dataset):
-    """Dataset trả về top-k candidate được chọn bởi cosine similarity để làm đầu vào cho reranker."""
+    """Return top-k pool positions without duplicating candidate images.
+
+    The trainer uses these positions to gather from one detached embedding bank
+    shared by the complete query batch.  This keeps TACS reranking at ``O(B*k)``
+    tensor lookups instead of encoding ``B*k`` candidate images every step.
+    """
 
     def __init__(
         self,
@@ -310,7 +315,8 @@ class TopKContextDataset(Dataset):
         self.candidate_dataset = candidate_dataset
         self.retriever = retriever
         self.top_k = max(1, top_k)
-        self.cached_assignments: list[list[tuple[int, float]]] = []
+        self.cached_positions = torch.empty((0, 0), dtype=torch.long)
+        self.cached_scores = torch.empty((0, 0), dtype=torch.float32)
         self.precompute_time_s = 0.0
         if encoder is not None:
             started_at = time.perf_counter()
@@ -334,19 +340,19 @@ class TopKContextDataset(Dataset):
             num_workers=0,
         )
 
-        assignments: list[list[tuple[int, float]]] = []
+        position_batches: list[Tensor] = []
+        score_batches: list[Tensor] = []
         with torch.no_grad():
             for images, _ in loader:
                 images = images.to(device)
                 q_embs = extract_normalized_features(encoder, images)
                 scores, positions, _ = self.retriever.retrieve_topk(q_embs, top_k=self.top_k)
-                for batch_idx in range(scores.shape[0]):
-                    batch_assignments: list[tuple[int, float]] = []
-                    for pos, sc in zip(positions[batch_idx].tolist(), scores[batch_idx].tolist()):
-                        batch_assignments.append((int(pos), float(sc)))
-                    assignments.append(batch_assignments)
+                position_batches.append(positions.to(dtype=torch.long, device="cpu"))
+                score_batches.append(scores.to(dtype=torch.float32, device="cpu"))
 
-        self.cached_assignments = assignments
+        if position_batches:
+            self.cached_positions = torch.cat(position_batches, dim=0)
+            self.cached_scores = torch.cat(score_batches, dim=0)
 
     def __len__(self) -> int:
         return len(self.query_dataset)
@@ -354,32 +360,15 @@ class TopKContextDataset(Dataset):
     def __getitem__(self, index: int) -> dict[str, Tensor]:
         query_image, query_target = self.query_dataset[index]
 
-        if self.cached_assignments:
-            ranked = self.cached_assignments[index]
+        if self.cached_positions.numel() > 0:
+            selected_positions = self.cached_positions[index]
+            selected_scores = self.cached_scores[index]
         else:
-            ranked = [(0, 0.0)]
+            selected_positions = torch.zeros(1, dtype=torch.long)
+            selected_scores = torch.zeros(1, dtype=torch.float32)
 
-        selected_positions = [pos for pos, _ in ranked[: self.top_k]]
-        selected_scores = [score for _, score in ranked[: self.top_k]]
-
-        candidate_images = []
-        candidate_indices = []
-        candidate_targets = []
-        for pos in selected_positions:
-            cand_image, cand_target = self.candidate_dataset[pos]
-            if isinstance(self.candidate_dataset, Subset):
-                candidate_indices.append(self.candidate_dataset.indices[pos])
-            else:
-                candidate_indices.append(pos)
-            candidate_targets.append(cand_target)
-            candidate_images.append(cand_image)
-
-        if not candidate_images:
-            candidate_images.append(self.candidate_dataset[0][0])
-            candidate_indices.append(0)
-            candidate_targets.append(self.candidate_dataset[0][1])
-
-        candidate_tensor = torch.stack(candidate_images)
+        candidate_indices = self.retriever.candidate_indices[selected_positions].long()
+        candidate_targets = self.retriever.candidate_targets[selected_positions].long()
         if isinstance(self.query_dataset, Subset):
             query_orig_idx = self.query_dataset.indices[index]
         else:
@@ -387,10 +376,10 @@ class TopKContextDataset(Dataset):
 
         return {
             "query": query_image,
-            "candidates": candidate_tensor,
             "target": torch.as_tensor(query_target, dtype=torch.long),
             "query_index": torch.tensor(query_orig_idx, dtype=torch.long),
-            "candidate_indices": torch.tensor(candidate_indices, dtype=torch.long),
-            "candidate_targets": torch.tensor(candidate_targets, dtype=torch.long),
-            "similarity_scores": torch.tensor(selected_scores, dtype=torch.float32),
+            "candidate_positions": selected_positions,
+            "candidate_indices": candidate_indices,
+            "candidate_targets": candidate_targets,
+            "similarity_scores": selected_scores,
         }

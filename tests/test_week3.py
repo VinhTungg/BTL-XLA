@@ -166,6 +166,14 @@ class TACSLoopTest(unittest.TestCase):
                             )
                             self.assertEqual(result["selection"]["retrieval_candidates_scanned"], 8)
                             self.assertEqual(result["selection"]["selector_candidates"], 4)
+                            self.assertEqual(
+                                result["selection"]["candidate_bank_refresh"],
+                                "once_per_train_or_evaluation_epoch",
+                            )
+                            self.assertEqual(
+                                result["selection"]["candidate_batch_representation"],
+                                "topk_indices_into_shared_embedding_bank",
+                            )
 
             rebuilt_cache = torch.load(cache_path, map_location="cpu", weights_only=True)
             self.assertEqual(rebuilt_cache["num_candidates"], 8)

@@ -133,7 +133,7 @@ class RetrievalTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     retriever.retrieve_topk(torch.tensor([[1.0, 0.0]]), top_k=invalid_top_k)
 
-    def test_topk_context_dataset_batches_candidates_for_tacs(self) -> None:
+    def test_topk_context_dataset_returns_positions_for_shared_bank(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             cached = precompute_candidate_embeddings(
                 candidate_dataset=self.candidate_dataset,
@@ -161,7 +161,8 @@ class RetrievalTest(unittest.TestCase):
             )
             batch = next(iter(DataLoader(dataset, batch_size=2)))
 
-            self.assertEqual(batch["candidates"].shape, (2, 4, 3, 32, 32))
+            self.assertNotIn("candidates", batch)
+            self.assertEqual(batch["candidate_positions"].shape, (2, 4))
             self.assertEqual(batch["candidate_indices"].shape, (2, 4))
             self.assertEqual(batch["candidate_targets"].shape, (2, 4))
             self.assertEqual(batch["similarity_scores"].shape, (2, 4))

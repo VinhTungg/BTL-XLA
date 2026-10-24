@@ -12,7 +12,7 @@
   2. **Thành viên 2:** [Họ và tên] - MSSV: [Mã số SV] - Phụ trách: Unit Test, Trực quan hóa dữ liệu (Visualization), Thống kê hiệu năng.
   3. **Thành viên 3:** [Họ và tên] - MSSV: [Mã số SV] - Phụ trách: Data Pipeline, Kiểm định chống rò rỉ (No-leakage), Tích hợp DataLoader - TACSModel, Audit trực quan, Quản lý tài liệu.
 - **Thời gian thực hiện:** Học kỳ [I / II] - Năm học 2025 - 2026
-- **Kho lưu trữ mã nguồn (Repository):** `E:\BTL-XLA`
+- **Kho lưu trữ mã nguồn (Repository):** thư mục gốc của dự án `BTL XLA`
 
 ---
 
@@ -25,6 +25,12 @@ Trong các bài toán thị giác máy tính dựa trên truy xuất (Retrieval-
 2. **Tái hiện nguyên lý TACS:** Xây dựng mô hình 2 khối (TaskAlignedSelector và Downstream Classifier) liên kết bằng cơ chế Gumbel-Softmax straight-through và hàm mất mát kết hợp Task Loss + Policy Gradient Reward.
 3. **Đề xuất cải tiến Hai giai đoạn (Two-Stage Task-Aligned Retrieval):** Kết hợp trích xuất đặc trưng thô nhanh (Coarse Retrieval) với bộ tái xếp hạng theo nhiệm vụ (Task-Aligned Reranking) nhằm giải quyết bài toán nút thắt cổ chai tính toán và bộ nhớ khi kích thước Candidate Pool mở rộng.
 
+Thực nghiệm chính thức huấn luyện 5 epoch cho năm mô hình trên toàn bộ
+CIFAR-10. Ở cấu hình mặc định và seed 42, Similarity-context đạt test
+accuracy cao nhất (42,67%). Ablation cho thấy giảm policy weight từ 1,0 xuống
+0,1 giúp TACS đạt 43,32% tại seed 42; tuy nhiên, đối chứng ba seed cho kết
+quả trung bình TACS 42,83% ± 1,01 và Similarity-context 43,05% ± 1,32.
+
 ---
 
 # MỤC LỤC
@@ -33,7 +39,7 @@ Trong các bài toán thị giác máy tính dựa trên truy xuất (Retrieval-
 3. [CHƯƠNG 3: PHƯƠNG PHÁP ĐỀ XUẤT CẢI TIẾN (TWO-STAGE TACS)](#chương-3-phương-pháp-đề-xuất-cải-tiến-two-stage-tacs)
 4. [CHƯƠNG 4: THIẾT KẾ THỰC NGHIỆM & PIPELINE DỮ LIỆU](#chương-4-thiết-kế-thực-nghiệm--pipeline-dữ-liệu)
 5. [CHƯƠNG 5: KẾT QUẢ TRIỂN KHAI & ĐÁNH GIÁ HỆ THỐNG](#chương-5-kết-quả-triển-khai--đánh-giá-hệ-thống)
-6. [CHƯƠNG 6: KẾ HOẠCH THỰC HIỆN CÁC GIAI ĐOẠN TIẾP THEO](#chương-6-kế-hoạch-thực-hiện-các-giai-đoạn-tiếp-theo)
+6. [CHƯƠNG 6: TIẾN ĐỘ THỰC HIỆN VÀ KHẢ NĂNG TÁI LẬP](#chương-6-tiến-độ-thực-hiện-và-khả-năng-tái-lập)
 7. [CHƯƠNG 7: KẾT LUẬN & HƯỚNG PHÁT TRIỂN](#chương-7-kết-luận--hướng-phát-triển)
 8. [TÀI LIỆU THAM KHẢO](#tài-liệu-tham-khảo)
 
@@ -55,7 +61,13 @@ $$\text{sim}(x_q, c_i) = \frac{\mathbf{e}(x_q) \cdot \mathbf{e}(c_i)}{\|\mathbf{
 Đồ án này đặt ra các đóng góp cụ thể:
 - Làm chủ và tái hiện kiến trúc **TACS** trên tập dữ liệu chuẩn CIFAR-10.
 - Xây dựng một quy trình chia dữ liệu và DataLoader chuẩn mực, chứng minh $0\%$ rò rỉ dữ liệu giữa tập huấn luyện, kho ứng viên và kiểm thử.
-- Đề xuất kiến trúc **Two-Stage Task-Aligned Retrieval** giúp giảm độ phức tạp thời gian từ $O(N)$ xuống $O(k)$ với $k \ll N$, mở đường cho việc áp dụng trên kho ngữ cảnh quy mô lớn.
+- Đề xuất kiến trúc **Two-Stage Task-Aligned Retrieval** giảm giai đoạn
+  selector có thể học từ $O(BND)$ xuống $O(BkD)$ với $k \ll N$; coarse
+  retrieval vẫn quét $N$ embedding bằng phép nhân ma trận chi phí thấp.
+- Tối ưu candidate embedding bank dùng chung, loại bỏ việc mã hóa lại
+  $B \times k$ ảnh trong mỗi batch của Two-Stage.
+- Thực hiện benchmark năm mô hình, ablation siêu tham số và đối chứng
+  ba seed, báo cáo cả accuracy, latency, throughput và RAM.
 
 ---
 
@@ -116,7 +128,9 @@ $$\mathcal{L}_{\text{policy}} = - \frac{1}{B} \sum_{b=1}^B \log P(c^* | x_q) \cd
 Hàm mất mát tổng thể kết hợp cả hai mục tiêu:
 $$\mathcal{L}_{TACS} = \mathcal{L}_{\text{task}} + \lambda \mathcal{L}_{\text{policy}}$$
 - $\mathcal{L}_{\text{task}}$: Cross-Entropy loss của mạng phân loại khi có context.
-- $\lambda$: Hệ số điều chỉnh độ quan trọng của policy loss (mặc định $\lambda = 1.0$ hoặc $0.5$).
+- $\lambda$: Hệ số điều chỉnh độ quan trọng của policy loss. Source dùng
+  mặc định $\lambda = 1,0$; ablation khảo sát thêm $\lambda = 0,1$ và
+  $\lambda = 0$ (task-loss-only).
 
 ---
 
@@ -134,8 +148,8 @@ Nhóm đề xuất giải pháp Two-Stage kết hợp ưu điểm của cả hai
 Candidate Pool (N = 9.000)
        │
        ▼ [Giai đoạn 1: Lọc thô siêu nhanh (Coarse Stage)]
-       │  - Sử dụng Frozen Precomputed Embeddings (DINO/ResNet).
-       │  - Truy xuất k ứng viên gần nhất bằng Cosine Similarity / FAISS (k = 32 << N).
+       │  - Sử dụng embedding tiền tính từ standard TinyVisionEncoder đã khóa.
+       │  - Truy xuất k ứng viên gần nhất bằng tích vô hướng Cosine (k = 32 << N).
        │  - Chi phí cực thấp, tốc độ mili-giây.
        ▼
 Filtered Top-k Candidates (k = 32)
@@ -150,11 +164,18 @@ Selected Context c* ──► Classifier
 
 ## 3.3. So sánh độ phức tạp tính toán
 
-| Tiêu chí | TACS Nguyên bản (Full Pool) | Cải tiến Two-Stage TACS | Mức độ cải thiện |
+| Tiêu chí | TACS Full | Two-Stage TACS | Kết quả |
 |---|:---:|:---:|:---:|
-| **Số phép tính Selector** | $\mathcal{O}(B \cdot N \cdot D)$ | $\mathcal{O}(B \cdot k \cdot D)$ | **Giảm $N/k$ lần** (ví dụ: $9000/32 \approx 281$ lần) |
-| **Dung lượng VRAM** | Rất cao, dễ tràn GPU | Cố định ở mức nhỏ | **Tiết kiệm $\approx 90\%$ VRAM** |
-| **Khả năng mở rộng Pool** | Bị giới hạn $< 100$ | Mở rộng lên tới hàng triệu mẫu | **Khả thi trên hệ thống thực tế** |
+| **Số candidate Selector chấm/query** | $N=9.000$ | $k=32$ | Giảm lý thuyết $9000/32 \approx 281$ lần |
+| **Độ phức tạp Selector** | $\mathcal{O}(BND)$ | $\mathcal{O}(BkD)$ | Two-Stage tỷ lệ theo $k$, không theo $N$ |
+| **End-to-end 5 epoch trên CPU** | 240,83 giây | 148,25 giây | Two-Stage nhanh hơn 1,62 lần |
+| **Peak RAM đo được** | 859,11 MB | 875,07 MB | Không ghi nhận lợi thế RAM trong run CPU này |
+
+Candidate của cả hai pipeline được mã hóa thành một embedding bank detach,
+làm mới mỗi train/validation/test pass. Two-Stage chỉ truyền vị trí top-k trong
+DataLoader rồi gom embedding từ bank chung; nhờ đó không còn mã hóa lại
+$B \times k$ ảnh candidate ở từng batch. Môi trường không có CUDA nên báo
+cáo không suy diễn mức tiết kiệm VRAM khi chưa có số đo GPU.
 
 ---
 
@@ -193,7 +214,8 @@ $$\mathcal{I}_{\text{query}} \cup \mathcal{I}_{\text{candidate}} \cup \mathcal{I
 Tập kiểm thử ($10.000$ mẫu) hoàn toàn cách ly, không bao giờ được phép xuất hiện trong Candidate Pool.
 
 ## 4.3. Thiết lập các Baseline so sánh bắt buộc
-Để chứng minh tính hiệu quả của TACS và cải tiến Two-Stage, nhóm thiết kế 4 mô hình thực nghiệm đối sánh trên cùng một kiến trúc backbone:
+Để đánh giá TACS và cải tiến Two-Stage, nhóm thiết kế 5 mô hình
+thực nghiệm đối sánh trên cùng một kiến trúc backbone:
 1. **Baseline 1 (No-Context):** Phân loại ảnh đơn thuần, vector context được đặt bằng vector 0.
 2. **Baseline 2 (Random-Context):** Chọn ngẫu nhiên một ảnh trong Candidate Pool đưa vào Classifier.
 3. **Baseline 3 (Similarity-Context):** Lấy ảnh có Cosine Similarity cao nhất trong không gian vector nhúng.
@@ -204,39 +226,126 @@ Tập kiểm thử ($10.000$ mẫu) hoàn toàn cách ly, không bao giờ đư�
 
 # CHƯƠNG 5: KẾT QUẢ TRIỂN KHAI & ĐÁNH GIÁ HỆ THỐNG
 
-## 5.1. Kết quả kiểm thử Unit Test và Kiểm tra Môi trường
-Toàn bộ hệ sinh thái mã nguồn được kiểm thử tự động với $8/8$ unit test đạt tiêu chuẩn:
-- `test_split_is_balanced_and_reproducible`: Đạt (Kiểm tra phân bố lớp và tính tái lập theo seed).
-- `test_split_save_and_load`: Đạt (Lưu và đọc file JSON chỉ số).
-- `test_sampling_is_reproducible`: Đạt (Đảm bảo candidate sampling thay đổi theo epoch nhưng cố định theo seed).
-- `test_batch_integrates_with_tacs`: Đạt (Đưa batch qua mô hình và hàm mất mát thành công).
-- `test_forward_shapes_and_hard_selection`: Đạt (Shape đúng chuẩn và One-Hot hợp lệ).
-- `test_hybrid_loss_backpropagates_to_selector`: Đạt (Gradient truyền ngược về Selector).
-- `test_eval_selection_is_deterministic`: Đạt (Suy luận tất định).
-- `test_make_context_grid_returns_query_and_candidate_axes`: Đạt (Vẽ lưới trực quan hóa).
+## 5.1. Kiểm thử và tính toàn vẹn thực nghiệm
 
-## 5.2. Hiệu năng Pipeline dữ liệu (DataLoader Benchmark)
-Đo lường trực tiếp trên CPU Intel/AMD trong môi trường sạch:
-- **Thông lượng xử lý:** $426.33 \text{ queries/giây}$ (Cold Cache) và đạt $1.280.56 \text{ queries/giây}$ (Warm Cache).
-- **Mức tiêu thụ bộ nhớ RAM (RSS):** $773.31 \text{ MB}$ cố định, không phát hiện hiện tượng rò rỉ bộ nhớ (Memory Leak) trong suốt quá trình duyệt 50 batch liên tục.
+Bộ test tự động hiện có 38 test: 37 test đạt và 1 integration test
+CIFAR-10 được skip theo mặc định. Khi bật cờ chạy dữ liệu thật, integration
+test này đạt 1/1. Phạm vi kiểm tra bao gồm:
 
-## 5.3. Kết quả tích hợp TACSModel và Lan truyền Gradient
-Chạy thực nghiệm kiểm chứng qua script `scripts/verify_tacs_pipeline.py`:
-- Kích thước batch: Query `[4, 3, 32, 32]`, Candidates `[4, 8, 3, 32, 32]`.
-- Đầu ra Selector: Ma trận trọng số `[4, 8]`, tổng xác suất mỗi hàng $= 1.0$ (One-Hot chính xác).
-- Lan truyền ngược: **$6/6$ tham số của Selector** và **$4/4$ tham số của Classifier** đều nhận gradient khác 0, chứng minh hàm mất mát kết hợp `TACSLoss` kích hoạt thành công cơ chế Straight-Through Gumbel-Softmax.
+- split phân tầng và không rò rỉ dữ liệu;
+- shape, hard selection, gradient của TACS và hybrid loss;
+- cache embedding và provenance của split/encoder/candidate pool;
+- TACS Full chấm đủ candidate pool và Two-Stage dùng top-k thực;
+- shared candidate embedding bank không nhân bản ảnh theo query;
+- checkpoint, metrics và script tổng hợp năm mô hình.
 
-## 5.4. Kết quả Audit trực quan 20 Query (160 Context Images)
-Thông qua script `scripts/inspect_20_queries.py` và ảnh kết xuất `docs/visual_inspection_20_queries.png`:
-- $0/20$ query bị trùng lặp index vào tập ứng viên ($0\%$ rò rỉ).
-- $100\%$ ảnh sau khi hoàn nguyên chuẩn hóa nằm trong khoảng giá trị pixel hợp lệ $[0.00, 1.00]$.
-- Tỷ lệ ứng viên khác lớp trung bình đạt $91.88\%$, tạo môi trường tương phản phong phú giúp mô hình học cách phân định ranh giới quyết định.
+Trainer không còn đường fallback sang mock data. Mọi run trong chương này ghi
+`data.source=cifar10`, đủ 36.000 query-train, 9.000 candidate, 5.000 validation,
+10.000 test và hash của file split.
+
+## 5.2. Benchmark chính thức năm mô hình
+
+Cấu hình chung: 5 epoch, batch size 64, seed 42, CPU, đánh giá test bằng
+checkpoint có validation accuracy tốt nhất. TACS Full và Two-Stage trong bảng này
+dùng hybrid loss mặc định $\lambda=1,0$.
+
+| Mô hình | Val Acc | Test Acc | Latency (ms/query) | Throughput (q/s) | Peak RAM (MB) | Retrieval / Selector |
+|---|---:|---:|---:|---:|---:|---:|
+| No-context | 41,92% | 42,47% | 0,1731 | 5.909,64 | 850,20 | 0 / 0 |
+| Random-context | 42,02% | 42,54% | 0,3845 | 2.617,11 | 877,41 | 0 / 1 |
+| **Similarity-context** | **42,44%** | **42,67%** | 0,4483 | 2.391,47 | 851,26 | 9.000 / 1 |
+| TACS Full | 40,76% | 42,05% | 0,7986 | 1.288,54 | 859,11 | 0 / 9.000 |
+| Two-Stage TACS | 41,22% | 41,91% | 0,7240 | 1.382,70 | 875,07 | 9.000 / 32 |
+
+![Biểu đồ so sánh năm mô hình](../outputs/final_5epoch/report/all_models_comparison.png)
+
+Ở cấu hình mặc định, Similarity-context đạt accuracy cao nhất. TACS Full
+và Two-Stage chưa vượt baseline này; vì vậy không thể kết luận task-aligned
+selection cải thiện chất lượng chỉ từ run seed 42 mặc định.
+
+## 5.3. Hiệu quả tối ưu shared embedding bank
+
+Trước tối ưu, Two-Stage trả về 32 ảnh candidate cho từng query và mã
+hóa lại chúng trong từng batch. Sau tối ưu, dataset chỉ trả về vị trí top-k;
+trainer mã hóa candidate pool một lần cho mỗi pass và gom embedding theo chỉ số.
+
+| Chỉ số pilot 1 epoch | Trước tối ưu | Sau tối ưu | Thay đổi |
+|---|---:|---:|---:|
+| End-to-end | 379,13 s | 52,13 s | Nhanh hơn 7,27 lần |
+| Train throughput | 120,90 q/s | 1.775,16 q/s | Tăng 14,68 lần |
+| Train model time | 285,02 s | 18,35 s | Nhanh hơn 15,54 lần |
+| Peak RAM | 1.025,49 MB | 889,63 MB | Giảm 13,2% |
+| Test accuracy | 30,26% | 30,99% | Không suy giảm trong pilot |
+
+Kết quả 5 epoch cũng cho thấy Two-Stage hoàn tất trong 148,25 giây, nhanh
+hơn TACS Full 240,83 giây khoảng 1,62 lần trên CPU.
+
+## 5.4. Ablation temperature, policy weight và top-K
+
+Giai đoạn sàng lọc chạy 3 epoch và chỉ dùng validation để chọn siêu tham
+số, không xem test. Kết quả TACS:
+
+| Temperature | Policy weight | Best validation 3 epoch |
+|---:|---:|---:|
+| 0,1 | 1,0 | 37,02% |
+| **0,1** | **0,0** | **37,26%** |
+| 0,1 | 0,1 | 37,20% |
+| 0,5 | 0,0 | 37,24% |
+| 1,0 | 0,0 | 37,16% |
+
+Với Two-Stage, giữ temperature 0,1 và policy weight 0, top-K=32 đạt validation
+37,94%, cao hơn K=8 (37,20%), K=16 (35,04%) và K=64 (37,18%).
+
+Xác nhận 5 epoch tại seed 42:
+
+| Mô hình | Policy weight | Validation | Test |
+|---|---:|---:|---:|
+| TACS mặc định | 1,0 | 40,76% | 42,05% |
+| **TACS hybrid nhẹ** | **0,1** | **42,30%** | **43,32%** |
+| TACS task-loss-only | 0,0 | 42,14% | 43,48% |
+| Two-Stage mặc định | 1,0 | 41,22% | 41,91% |
+| Two-Stage hybrid nhẹ | 0,1 | 41,42% | 41,61% |
+| Two-Stage task-loss-only | 0,0 | 41,58% | 42,30% |
+
+Giảm policy weight cải thiện TACS rõ tại seed 42. Tuy nhiên,
+`policy_weight=0` loại policy-gradient term nên phải được ghi là
+task-loss-only ablation, không phải hybrid TACS đầy đủ. Cấu hình 0,1 giữ
+hybrid objective và chỉ thấp hơn task-loss-only 0,16 điểm test tại seed 42.
+
+## 5.5. Đối chứng nhiều seed
+
+TACS hybrid nhẹ và Similarity-context được chạy cùng ba seed huấn luyện;
+split dữ liệu và standard encoder vẫn cố định.
+
+| Seed | TACS hybrid test | Similarity test | TACS - Similarity |
+|---:|---:|---:|---:|
+| 7 | 41,67% | 41,97% | -0,30 |
+| 42 | 43,32% | 42,67% | +0,65 |
+| 123 | 43,51% | 44,52% | -1,01 |
+| **Trung bình ± SD** | **42,83% ± 1,01** | **43,05% ± 1,32** | **-0,22 ± 0,83** |
+
+TACS chỉ thắng ở một trong ba seed. Chênh lệch paired trung bình nghiêng về
+Similarity-context 0,22 điểm; với cỡ mẫu ba seed, chưa có bằng chứng TACS
+vượt baseline một cách ổn định hoặc có ý nghĩa thống kê.
+
+## 5.6. Thảo luận
+
+Kết quả cho thấy hai khía cạnh khác nhau:
+
+1. **Hiệu quả hệ thống:** shared embedding bank giải quyết đúng nút thắt
+   mã hóa lặp lại; Two-Stage nhanh hơn TACS Full mà vẫn chấm top-k thực.
+2. **Hiệu quả mô hình:** TACS có thể đạt kết quả cao ở một seed sau tuning,
+   nhưng phương sai giữa seed lớn và trung bình chưa vượt Similarity-context.
+3. **Giới hạn phần cứng:** tất cả số đo trong báo cáo được thu trên CPU;
+   peak VRAM không có giá trị và không nên suy diễn hiệu năng GPU.
+4. **Giới hạn thống kê:** ba seed phù hợp để phát hiện độ nhạy, nhưng
+   chưa đủ cho một kết luận ý nghĩa thống kê mạnh.
 
 ---
 
-# CHƯƠNG 6: KẾ HOẠCH THỰC HIỆN CÁC GIAI ĐOẠN TIẾP THEO
+# CHƯƠNG 6: TIẾN ĐỘ THỰC HIỆN VÀ KHẢ NĂNG TÁI LẬP
 
-Theo kế hoạch tổng thể tại `docs/PROJECT_PLAN.md`, lộ trình tiếp theo của đồ án được phân bổ như sau:
+Các mốc chính của đồ án đã hoàn thành:
 
 ```
 [Tuần 1: M0 - M1] (HOÀN THÀNH)
@@ -244,35 +353,57 @@ Theo kế hoạch tổng thể tại `docs/PROJECT_PLAN.md`, lộ trình tiếp 
   ├─ Chia phân tầng CIFAR-10 & Candidate Pool
   └─ Tích hợp DataLoader - TACSModel
 
-[Tuần 2: M1 - M2] (TIẾP THEO)
+[Tuần 2: M1 - M2] (HOÀN THÀNH)
   ├─ Huấn luyện 3 Baseline (No-context, Random, Cosine-Similarity)
   ├─ Đo đạc độ chính xác phân loại Top-1 Accuracy
-  └─ Huấn luyện TACS Full ban đầu (Epoch 1 - 20)
+  └─ Chuẩn hóa checkpoint và cache retrieval
 
-[Tuần 3: M3 - M4]
+[Tuần 3: M3 - M4] (HOÀN THÀNH)
+  ├─ Huấn luyện TACS Full và năm mô hình 5 epoch
   ├─ Triển khai Two-Stage TACS Reranker
-  ├─ Đánh giá đồng thời 3 chỉ số: Accuracy, Latency (ms), Memory (VRAM)
+  ├─ Đánh giá Accuracy, Latency, Throughput và peak RAM; VRAM ghi N/A trên CPU
   └─ Thực hiện Ablation Study (Nhiệt độ Gumbel tau, Hệ số lambda policy)
 
-[Tuần 4: M5]
-  ├─ Tổng hợp báo cáo cuối kỳ hoàn chỉnh
-  ├─ Đóng gói mã nguồn & Viết tài liệu hướng dẫn tái lập
-  └─ Chuẩn bị Slide thuyết trình & Demo
+[Tuần 4: M5] (ĐANG HOÀN THIỆN)
+  ├─ Tổng hợp benchmark, ablation và đối chứng nhiều seed
+  ├─ Cập nhật báo cáo tổng thể
+  └─ Còn lại: slide thuyết trình và demo nếu môn học yêu cầu
 ```
+
+Mỗi run lưu `config.json`, `metrics.json`, `checkpoint_best.pt` và
+`best_encoder.pt`. Script `scripts/analyze_all_models.py` kiểm tra schema, provenance,
+split, số mẫu và sự hiện diện của test result trước khi sinh bảng/biểu đồ.
 
 ---
 
 # CHƯƠNG 7: KẾT LUẬN & HƯỚNG PHÁT TRIỂN
 
 ## 7.1. Kết luận
-1. Đồ án đã xây dựng thành công nền móng vững chắc cho việc tái hiện và cải tiến TACS.
-2. Bộ dữ liệu CIFAR-10 được tổ chức khoa học, có khả năng tái lập cao nhờ cơ chế hạt giống ngẫu nhiên (seed 42), đảm bảo tính công bằng và loại bỏ hoàn toàn nguy cơ rò rỉ dữ liệu.
-3. Module TACS Model và hàm mất mát kết hợp hoạt động hoàn hảo trên thực tế, đảm bảo gradient truyền ngược đầy đủ qua thao tác lựa chọn rời rạc.
+1. Đồ án đã xây dựng được pipeline TACS/Two-Stage hoàn chỉnh trên
+   CIFAR-10 thật, có checkpoint, provenance và test tự động.
+2. Shared candidate embedding bank là cải tiến hệ thống hiệu quả: pilot
+   Two-Stage nhanh hơn 7,27 lần so với triển khai mã hóa lặp lại; run 5 epoch
+   nhanh hơn TACS Full 1,62 lần.
+3. Ở cấu hình mặc định seed 42, Similarity-context dẫn đầu với 42,67%
+   test accuracy. Tuning policy weight giúp TACS đạt 43,32% tại seed 42.
+4. Trên ba seed, TACS hybrid nhẹ đạt 42,83% ± 1,01, trong khi
+   Similarity-context đạt 43,05% ± 1,32. Do đó, đồ án không tuyên bố
+   TACS vượt baseline một cách ổn định.
+5. Kết quả quan trọng nhất là phân tách rõ hiệu quả tính toán và hiệu
+   quả accuracy: Two-Stage cải thiện tốc độ, nhưng chưa chứng minh được
+   lợi thế accuracy trong thiết lập hiện tại.
 
 ## 7.2. Hướng phát triển
-- Thử nghiệm trên các kiến trúc Backbone mạnh hơn (ResNet-18, MobileNetV3 hoặc Vision Transformer nhỏ).
-- Khảo sát lịch trình suy giảm nhiệt độ (Temperature Annealing) cho Gumbel-Softmax để tăng độ ổn định khi hội tụ.
-- Hoàn thiện mô hình Two-Stage Task-Aligned Retrieval trên không gian Candidate Pool lớn.
+- Mở rộng từ 3 lên ít nhất 5 seed và dùng kiểm định paired trước khi
+  kết luận về chênh lệch accuracy nhỏ.
+- Phân tích phân phối reward, entropy của selector và tỷ lệ chọn context đúng
+  lớp để giải thích độ nhạy seed.
+- Khảo sát temperature annealing, reward baseline theo moving average và policy-weight
+  schedule thay cho một hệ số cố định.
+- Thử backbone mạnh hơn như ResNet-18, MobileNetV3 hoặc Vision Transformer nhỏ;
+  TinyVisionEncoder hiện tại giới hạn trần accuracy của cả năm mô hình.
+- Chạy benchmark CUDA thực để đo VRAM và xác nhận khả năng mở rộng
+  candidate pool thay vì suy diễn từ số đo CPU.
 
 ---
 

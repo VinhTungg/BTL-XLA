@@ -93,7 +93,10 @@ hoặc không khớp checkpoint sẽ được tự động tái tạo.
   nhân bản 9.000 ảnh cho từng query. Bank được detach để giới hạn bộ nhớ; encoder
   vẫn nhận gradient qua nhánh query.
 - `--baseline two_stage --topk-candidates 32` quét toàn pool bằng cosine từ
-  standard encoder, sau đó chỉ đưa top-32 vào TACS selector.
+  standard encoder, sau đó chỉ đưa top-32 vào TACS selector. Dataset chỉ
+  chuyển các vị trí top-k; trainer gom embedding từ một candidate bank dùng chung,
+  được làm mới mỗi train/evaluation epoch, thay vì mã hóa lại `B*k` ảnh
+  candidate trong từng batch.
 - `--topk-candidates` chỉ tác động đến Two-Stage, không thu nhỏ TACS Full.
 - Hai mode dùng cùng kiến trúc và cùng khởi tạo model theo seed. Có thể đặt
   `--selector-temperature` và `--policy-weight`. Temperature điều khiển gradient

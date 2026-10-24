@@ -85,10 +85,12 @@ Mode `tacs` trước đây chỉ lấy ngẫu nhiên `topk_candidates`, vì vậ
 - **TACS Full:** selector chấm toàn bộ 9.000 candidate cho mỗi query thông qua
   một embedding bank dùng chung, được làm mới mỗi train/evaluation epoch.
 - **Two-Stage:** standard encoder quét 9.000 candidate bằng cosine, giữ top-k,
-  sau đó TACS selector chỉ đánh giá k candidate này.
+  sau đó TACS selector chỉ đánh giá k candidate này. Top-k được truyền
+  bằng vị trí trong pool và gom từ một embedding bank chung được làm mới
+  mỗi train/evaluation epoch; không còn mã hóa lại `B*k` ảnh mỗi batch.
 
-Embedding bank của TACS Full được detach để tránh giữ graph của 9.000 ảnh và
-không bị nhân bản theo batch. Nhánh candidate của Two-Stage cũng được detach để
+Embedding bank của cả TACS Full và Two-Stage được detach để tránh giữ
+graph của 9.000 ảnh và không bị nhân bản theo batch. Cơ chế này giúp
 hai mode dùng cùng cơ chế gradient; selector encoder vẫn được cập nhật qua nhánh
 query. Đây là lựa chọn triển khai có giới hạn bộ nhớ và được ghi rõ trong metadata.
 
@@ -174,7 +176,20 @@ python -m unittest discover -s tests -p "test_week3_real_cifar10.py" -v
 
 Đây chỉ là **chạy thử để kiểm tra chương trình hoạt động với dữ liệu thật**; không phải huấn luyện đầy đủ, không đánh giá chất lượng mô hình trên toàn bộ tập test và không phải benchmark. Test cũng tính embedding cho candidate pool gồm 9.000 ảnh. Cần CIFAR-10 đã giải nén trong `data/cifar-10-batches-py/` và split `data/splits/cifar10_seed42.json`. Có thể đặt `TACS_DATA_ROOT` và `TACS_SPLIT_FILE` để trỏ tới vị trí khác.
 
-### 4.5. Hướng dẫn chạy
+### 4.5. Benchmark Two-Stage sau tối ưu shared embedding bank
+
+Benchmark 1 epoch ngày 2026-10-24 dùng CPU, batch size 64, top-k 32 và toàn bộ
+36.000/5.000/10.000 mẫu train/validation/test:
+
+| Chỉ số | Trước tối ưu | Sau tối ưu | Thay đổi |
+|---|---:|---:|---:|
+| End-to-end | 379,13 s | 52,13 s | Nhanh hơn 7,27x |
+| Train throughput | 120,90 q/s | 1.775,16 q/s | Tăng 14,68x |
+| Train model time | 285,02 s | 18,35 s | Nhanh hơn 15,54x |
+| Peak RAM | 1.025,49 MB | 889,63 MB | Giảm 13,2% |
+| Test accuracy | 30,26% | 30,99% | Không suy giảm |
+
+### 4.6. Hướng dẫn chạy
 
 Đặt source path và chuẩn bị CIFAR-10:
 

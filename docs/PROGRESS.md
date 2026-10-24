@@ -1,6 +1,6 @@
 # Tiến độ
 
-Cập nhật: 2026-09-20
+Cập nhật: 2026-10-24
 
 | Hạng mục                      | Trạng thái | Ghi chú                                                          |
 | ----------------------------- | ---------- | ---------------------------------------------------------------- |
@@ -8,13 +8,15 @@ Cập nhật: 2026-09-20
 | Kiểm kê source                | Xong       | Không có code TACS chính thức trong workspace                    |
 | Phân tích dự án tham khảo     | Xong       | CLIP + Weaviate; không tái sử dụng cho lõi training              |
 | Skeleton TACS                 | Xong       | Selector, classifier, hybrid loss                                |
-| Unit test CPU                 | Xong       | 7/7 test pass; kiểm tra split, sampling, forward và gradient     |
+| Unit test CPU                 | Xong       | 37 test pass, 1 integration skip mặc định; bật cờ thì integration đạt 1/1 |
 | Giải thích TACS trong báo cáo | Xong       | Có ví dụ, luồng xử lý, Gumbel và reward                          |
 | Pipeline CIFAR-10             | Xong       | Split 36.000/9.000/5.000/10.000; candidate sampling tái lập được |
 | Benchmark DataLoader          | Xong       | Môi trường sạch: 426,33 query/s trên CPU; RSS 773,31 MB          |
 | Baseline huấn luyện thật      | Xong       | Hoàn thành 3 baseline: No-context, Random, Similarity (M2)       |
-| Reproduction                  | Chưa làm   | Trọng tâm Tuần 3 (M3)                                            |
-| Cải tiến two-stage            | Chưa làm   | Tuần 4 (M4)                                                      |
+| Reproduction                  | Xong       | Đã train/test 5 epoch cho đủ 5 mô hình trên CIFAR-10 thật      |
+| Cải tiến two-stage            | Xong       | Top-k dùng shared embedding bank; benchmark CPU nhanh hơn 7,27x   |
+| Ablation TACS/Two-Stage        | Xong       | Temperature, policy weight và top-K; có xác nhận 5 epoch       |
+| Báo cáo tổng thể            | Xong       | Đã tích hợp benchmark, ablation và mean ± SD ba seed        |
 
 ## Nghiệm thu Tuần 2 - Milestone M2 (3 Baseline Đối sánh)
 
@@ -25,7 +27,20 @@ Cập nhật: 2026-09-20
 
 ## Việc tiếp theo
 
-1. Chuyển sang Tuần 3 (Milestone M3 - TACS Reproduction).
-2. Xây dựng vòng lặp huấn luyện phối hợp: tối ưu Selector bằng Gumbel-Softmax + Policy Gradient REINFORCE và Classifier bằng Cross-Entropy Task Loss.
-3. Thực hiện nghiên cứu thực nghiệm bóc tách (Ablation Study) và so sánh hiệu quả với 3 baseline Tuần 2.
+1. Chuẩn bị slide thuyết trình và kịch bản demo nếu môn học yêu cầu.
+2. Nếu cần khẳng định thống kê, mở rộng lên ít nhất 5 seed.
+3. Phân tích selector/reward để giảm độ nhạy Gumbel giữa các seed.
+
+## Benchmark chính thức 5 epoch
+
+Kết quả ngày 2026-10-24 trên CPU, batch size 64, toàn bộ split
+36.000/9.000/5.000/10.000:
+
+| Mô hình | Validation | Test |
+|---|---:|---:|
+| No-context | 41,92% | 42,47% |
+| Random-context | 42,02% | 42,54% |
+| Similarity-context | **42,44%** | **42,67%** |
+| TACS Full | 40,76% | 42,05% |
+| Two-Stage TACS | 41,22% | 41,91% |
 

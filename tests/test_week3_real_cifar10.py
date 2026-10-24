@@ -115,7 +115,8 @@ class Week3RealCIFAR10IntegrationTest(unittest.TestCase):
 
             two_stage_batch = next(iter(DataLoader(two_stage_train, batch_size=2)))
             scores = two_stage_batch["similarity_scores"]
-            self.assertEqual(tuple(two_stage_batch["candidates"].shape), (2, 4, 3, 32, 32))
+            self.assertNotIn("candidates", two_stage_batch)
+            self.assertEqual(tuple(two_stage_batch["candidate_positions"].shape), (2, 4))
             self.assertTrue(torch.all(scores[:, :-1] >= scores[:, 1:]).item())
 
 
