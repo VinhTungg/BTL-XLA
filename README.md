@@ -61,7 +61,19 @@ Dữ liệu được chia cố định bằng seed 42:
 python -m unittest discover -s tests -v
 ```
 
-Hiện có 7 unit test kiểm tra shape, chia dữ liệu, candidate sampling, forward pass và gradient.
+Bộ test bao phủ shape, chia dữ liệu, candidate sampling, forward pass,
+gradient, retrieval, trainer và kiểm tra tích hợp CIFAR-10. Integration test dùng
+dữ liệu thật được tắt mặc định và chỉ chạy khi đặt
+`TACS_RUN_REAL_CIFAR_TESTS=1`.
+
+## Chế độ dữ liệu của trainer
+
+Trainer mặc định luôn dùng CIFAR-10 thật và sẽ dừng với thông báo lỗi
+nếu không nạp được dữ liệu. `--dry-run` chỉ giới hạn số mẫu và số epoch;
+nó vẫn đọc CIFAR-10 thật. Trainer không còn chế độ dữ liệu mock.
+
+Mỗi `metrics.json` ghi rõ `data.source`, kích thước các tập và hash của
+file split để xác minh kết quả được tạo từ đúng dữ liệu.
 
 ## Chạy smoke training
 
@@ -69,7 +81,8 @@ Hiện có 7 unit test kiểm tra shape, chia dữ liệu, candidate sampling, f
 python -m tacs.train_smoke --steps 5
 ```
 
-Smoke training dùng dữ liệu giả để kiểm tra nhanh model và loss, không phải kết quả huấn luyện chính thức.
+Smoke training dùng một vài batch CIFAR-10 thật để kiểm tra nhanh model
+và loss; không phải kết quả huấn luyện chính thức.
 
 ## Benchmark DataLoader
 

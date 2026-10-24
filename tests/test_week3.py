@@ -2,10 +2,11 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 from tacs.losses import TACSLoss
 from tacs.model import TACSModel
@@ -42,30 +43,51 @@ class TACSLoopTest(unittest.TestCase):
 
     def test_tacs_and_two_stage_dry_runs_save_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
-            for baseline in ("tacs", "two_stage"):
-                with self.subTest(baseline=baseline):
-                    output_dir = Path(tmp_dir) / baseline
-                    config = ExperimentConfig(
-                        baseline=baseline,
-                        seed=42,
-                        epochs=1,
-                        batch_size=2,
-                        embedding_dim=8,
-                        device="cpu",
-                        output_dir=str(output_dir),
-                        standard_encoder_path=str(Path(tmp_dir) / "missing_encoder.pt"),
-                        topk_candidates=4,
-                        dry_run=True,
-                        max_train_samples=4,
-                        max_val_samples=4,
-                    )
+            generator = torch.Generator().manual_seed(42)
 
-                    result = run_experiment(config)
+            def dataset(size: int) -> TensorDataset:
+                return TensorDataset(
+                    torch.randn(size, 3, 32, 32, generator=generator),
+                    torch.randint(0, 10, (size,), generator=generator),
+                )
 
-                    self.assertEqual(result["baseline"], baseline)
-                    self.assertTrue((output_dir / "metrics.json").is_file())
-                    self.assertTrue((output_dir / "checkpoint_best.pt").is_file())
-                    self.assertTrue((output_dir / "best_encoder.pt").is_file())
+            cifar_fixture = SimpleNamespace(
+                query_train=dataset(8),
+                candidate_pool=dataset(8),
+                validation=dataset(8),
+                test=dataset(8),
+            )
+            split_path = Path(tmp_dir) / "split.json"
+            split_path.write_text('{"seed": 42}', encoding="utf-8")
+
+            with patch("tacs.train.build_cifar10", return_value=cifar_fixture):
+                for baseline in ("tacs", "two_stage"):
+                    with self.subTest(baseline=baseline):
+                        output_dir = Path(tmp_dir) / baseline
+                        config = ExperimentConfig(
+                            baseline=baseline,
+                            seed=42,
+                            epochs=1,
+                            batch_size=2,
+                            embedding_dim=8,
+                            device="cpu",
+                            split_file=str(split_path),
+                            output_dir=str(output_dir),
+                            standard_encoder_path=str(Path(tmp_dir) / "missing_encoder.pt"),
+                            topk_candidates=4,
+                            dry_run=True,
+                            max_train_samples=4,
+                            max_val_samples=4,
+                        )
+
+                        result = run_experiment(config)
+
+                        self.assertEqual(result["baseline"], baseline)
+                        self.assertTrue((output_dir / "metrics.json").is_file())
+                        self.assertTrue((output_dir / "checkpoint_best.pt").is_file())
+                        self.assertTrue((output_dir / "best_encoder.pt").is_file())
+                        self.assertEqual(result["data"]["source"], "cifar10")
+                        self.assertEqual(result["data"]["effective_sizes"]["query_train"], 4)
 
     def test_cli_parses_two_stage_topk_option(self) -> None:
         with patch.object(

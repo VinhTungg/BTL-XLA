@@ -9,6 +9,7 @@ Hỗ trợ 3 baseline:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import time
 from dataclasses import asdict, dataclass
@@ -18,7 +19,7 @@ from typing import Any
 import psutil
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset
+from torch.utils.data import DataLoader, Dataset, Subset
 
 from .baselines import BaselineModel
 from .data import ContextDataset, build_cifar10
@@ -74,52 +75,42 @@ def get_current_rss_mb() -> float:
     return round(process.memory_info().rss / (1024 * 1024), 2)
 
 
-def create_mock_datasets(
-    num_train: int = 200,
-    num_candidate: int = 50,
-    num_val: int = 50,
-    num_test: int = 50,
-    num_classes: int = 10,
-    seed: int = 42,
-) -> tuple[Dataset, Dataset, Dataset, Dataset]:
-    """Tạo mock dataset dùng cho unit test hoặc dry-run khi chưa tải xong CIFAR-10 thật."""
-    generator = torch.Generator().manual_seed(seed)
-    total = num_train + num_candidate + num_val + num_test
-    images = torch.randn(total, 3, 32, 32, generator=generator)
-    targets = torch.randint(0, num_classes, (total,), generator=generator)
-    full = TensorDataset(images, targets)
-
-    train_set = Subset(full, list(range(0, num_train)))
-    candidate_set = Subset(full, list(range(num_train, num_train + num_candidate)))
-    val_set = Subset(full, list(range(num_train + num_candidate, num_train + num_candidate + num_val)))
-    test_set = Subset(full, list(range(num_train + num_candidate + num_val, total)))
-    return train_set, candidate_set, val_set, test_set
-
-
 def build_dataloaders(
     config: ExperimentConfig,
     device: torch.device,
-) -> tuple[DataLoader, DataLoader, DataLoader | None, Dataset]:
+) -> tuple[DataLoader, DataLoader, DataLoader | None, Dataset, dict[str, Any]]:
     """Khởi tạo DataLoader tương ứng với từng baseline."""
     torch.manual_seed(config.seed)
 
-    # Thử nạp CIFAR-10 thật
-    use_mock = False
     try:
-        datasets = build_cifar10(root=config.data_root, split_file=config.split_file, download=False)
-        query_train = datasets.query_train
-        candidate_pool = datasets.candidate_pool
-        validation = datasets.validation
-        test_set = datasets.test
-    except Exception:
-        use_mock = True
-        n_tr = 400 if not config.dry_run else 16
-        n_ca = 100 if not config.dry_run else 8
-        n_va = 100 if not config.dry_run else 8
-        n_te = 100 if not config.dry_run else 8
-        query_train, candidate_pool, validation, test_set = create_mock_datasets(
-            num_train=n_tr, num_candidate=n_ca, num_val=n_va, num_test=n_te, seed=config.seed
+        datasets = build_cifar10(
+            root=config.data_root,
+            split_file=config.split_file,
+            download=False,
         )
+    except Exception as error:
+        raise RuntimeError(
+            "Không thể nạp CIFAR-10. Lần chạy đã dừng trước khi "
+            "tạo output. Hãy kiểm tra --data-root và --split-file."
+        ) from error
+
+    query_train = datasets.query_train
+    candidate_pool = datasets.candidate_pool
+    validation = datasets.validation
+    test_set = datasets.test
+    split_path = Path(config.split_file)
+    split_sha256 = (
+        hashlib.sha256(split_path.read_bytes()).hexdigest()
+        if split_path.is_file()
+        else None
+    )
+
+    full_sizes = {
+        "query_train": len(query_train),
+        "candidate_pool": len(candidate_pool),
+        "validation": len(validation),
+        "test": len(test_set),
+    }
 
     # Giới hạn số mẫu cho dry-run hoặc config (cho fast testing)
     if config.dry_run:
@@ -307,7 +298,20 @@ def build_dataloaders(
         else None
     )
 
-    return train_loader, val_loader, test_loader, candidate_pool
+    data_info = {
+        "source": "cifar10",
+        "data_root": config.data_root,
+        "split_file": config.split_file,
+        "split_sha256": split_sha256,
+        "full_sizes": full_sizes,
+        "effective_sizes": {
+            "query_train": len(train_ds),
+            "candidate_pool": len(candidate_pool),
+            "validation": len(val_ds),
+            "test": len(test_ds),
+        },
+    }
+    return train_loader, val_loader, test_loader, candidate_pool, data_info
 
 
 def unpack_batch(batch: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
@@ -420,11 +424,18 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     torch.manual_seed(config.seed)
     device = resolve_device(config.device)
 
+    train_loader, val_loader, test_loader, candidate_pool, data_info = build_dataloaders(
+        config,
+        device,
+    )
+
     out_dir = Path(config.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     config.save(out_dir / "config.json")
-
-    train_loader, val_loader, test_loader, candidate_pool = build_dataloaders(config, device)
+    print(
+        f"Data source: {data_info['source']} | "
+        f"effective sizes: {data_info['effective_sizes']}"
+    )
 
     if config.baseline in {"tacs", "two_stage"}:
         model = TACSModel(num_classes=config.num_classes, embedding_dim=config.embedding_dim).to(device)
@@ -514,6 +525,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         "baseline": config.baseline,
         "seed": config.seed,
         "epochs": epochs,
+        "data": data_info,
         "best_val_acc": round(best_val_acc, 4),
         "total_time_s": total_time,
         "test_result": test_result,
@@ -551,7 +563,11 @@ def parse_args() -> ExperimentConfig:
         default=32,
         help="Số candidate đầu vào cho TACS/Two-Stage",
     )
-    parser.add_argument("--dry-run", action="store_true", help="Chạy kiểm thử ngắn 1 epoch batch nhỏ")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Chạy ngắn 1 epoch trên một phần dữ liệu đã chọn",
+    )
     parser.add_argument("--eval-test", action="store_true", help="Đánh giá test set sau khi hoàn thành")
 
     args = parser.parse_args()

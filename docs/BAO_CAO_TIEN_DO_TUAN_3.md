@@ -118,12 +118,12 @@ Các file kết quả nằm trong `outputs/smoke/tacs/` và `outputs/smoke/two_s
 
 **Các con số trên chỉ là kết quả smoke test với một epoch và tập mẫu nhỏ; không phải kết quả CIFAR-10 để so sánh hay đưa vào kết luận thực nghiệm.** `test_result` trong cả hai file metrics là `null`.
 
-### 4.3. Lưu ý bắt buộc trước khi chạy dữ liệu thật
+### 4.3. Kiểm soát nguồn dữ liệu trước khi chạy thật
 
-> [!WARNING]
-> **Chưa chạy huấn luyện chính thức cho đến khi xử lý hoặc xác minh được nhánh fallback dữ liệu.** Trong [build_dataloaders](../src/tacs/train.py), nếu `build_cifar10(...)` phát sinh bất kỳ exception nào, trainer hiện bắt lỗi rồi âm thầm gọi `create_mock_datasets(...)`. Vì vậy, bỏ `--dry-run` không đảm bảo đang dùng CIFAR-10: lệnh vẫn có thể chạy xong và ghi `metrics.json`/checkpoint như bình thường, nhưng trên dữ liệu giả. Không dùng những artifact đó làm kết quả thực nghiệm CIFAR-10.
+> [!IMPORTANT]
+> **Cập nhật 2026-10-24:** trainer đã loại bỏ hoàn toàn đường chạy mock. Lỗi nạp CIFAR-10 sẽ dừng lần chạy trước khi tạo output; `--dry-run` vẫn dùng dữ liệu thật. `metrics.json` ghi nguồn dữ liệu, kích thước tập và hash file split.
 
-Trước khi train chính thức, Người 1 cần đổi fallback này thành lỗi rõ ràng cho lượt chạy thật (hoặc cung cấp chế độ mock tường minh, mặc định tắt); Người 2 cần xác nhận log/config chỉ ra dữ liệu CIFAR-10 thật, đúng split và số lượng mẫu. Nếu lần chạy báo lỗi khi nạp dữ liệu, phải dừng và sửa nguyên nhân, không báo cáo metric vừa sinh ra là kết quả CIFAR-10.
+Trước khi train chính thức, vẫn phải xác nhận `data.source=cifar10`, đúng split và đủ số lượng mẫu trong `metrics.json`. Các artifact baseline cũ được sinh từ mock không được dùng làm kết quả CIFAR-10.
 
 ### 4.4. Kiểm thử tích hợp Tuần 3 trên CIFAR-10 thật
 
@@ -187,7 +187,7 @@ Kết quả được lưu lần lượt ở `outputs/no_context/`, `outputs/tacs
 ## 6. Kế hoạch tiếp theo
 
 Các việc **chưa hoàn tất**:
-1. Người 1 xử lý fallback mock trong trainer để lần chạy chính thức không thể âm thầm dùng dữ liệu giả; sau đó Người 2 xác nhận CIFAR-10/split và chạy huấn luyện, đánh giá thực tế cho `tacs` và `two_stage`.
+1. Đường chạy mock trong trainer đã bị loại bỏ; tiếp theo cần xác nhận CIFAR-10/split qua metadata và chạy huấn luyện, đánh giá thực tế cho `tacs` và `two_stage`.
 2. Thu thập accuracy, latency và memory trên cùng cấu hình; không dùng metrics smoke test thay cho kết quả này.
 3. Tổng hợp kết quả của đủ 5 mô hình: `no_context`, `random`, `similarity`, `tacs`, `two_stage`.
 4. Người 3 cập nhật biểu đồ, báo cáo tổng kết, slide và kịch bản demo từ số liệu đã xác thực.
@@ -199,4 +199,4 @@ Các việc **chưa hoàn tất**:
 
 Phần triển khai TACS Full và pipeline Two-Stage đã được tích hợp. Theo kết quả chạy gần nhất, **26/26 test đạt**; trong đó integration test CIFAR-10 thật xác nhận chương trình đọc được dữ liệu và chạy thử train/evaluate cơ bản cho TACS/Two-Stage. Hiểu đơn giản: các phần code được kiểm tra đều chạy qua, nhưng đây chưa phải kết quả huấn luyện đầy đủ hay bằng chứng mô hình đạt độ chính xác tốt.
 
-**Trạng thái bàn giao:** code đã sẵn sàng cho bước kiểm tra tiếp theo, nhưng trainer hiện chưa an toàn cho huấn luyện chính thức do có thể âm thầm fallback sang mock dataset. Cần xử lý/kiểm soát hành vi này trước khi chạy thực nghiệm. Tại thời điểm báo cáo, chưa có kết quả train/test CIFAR-10 đầy đủ cho `tacs` và `two_stage`; chưa thể kết luận accuracy, latency hay mức sử dụng bộ nhớ của chúng trên dữ liệu thật.
+**Trạng thái bàn giao:** trainer đã fail-fast khi CIFAR-10 lỗi và ghi provenance dữ liệu. Tuy nhiên, chưa có kết quả train/test CIFAR-10 đầy đủ cho `tacs` và `two_stage`; chưa thể kết luận accuracy, latency hay mức sử dụng bộ nhớ của chúng trên dữ liệu thật.

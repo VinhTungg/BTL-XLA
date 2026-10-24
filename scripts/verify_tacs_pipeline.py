@@ -1,7 +1,7 @@
 """Kiểm tra tích hợp DataLoader với Skeleton TACS - Nhiệm vụ Thành viên 3 (Gói 2 & 4).
 
 Script này thực hiện:
-1. Tạo mock dataset tương thích chuẩn CIFAR-10 (10 lớp, ảnh 3x32x32).
+1. Nạp split CIFAR-10 thật của dự án.
 2. Thiết lập ContextDataset (num_candidates=8) và DataLoader (batch_size=4).
 3. Đưa 1 batch qua TACSModel.
 4. Kiểm tra các tensor đầu ra:
@@ -15,10 +15,12 @@ Script này thực hiện:
 
 from __future__ import annotations
 
-import torch
-from torch.utils.data import DataLoader, Subset, TensorDataset
+import argparse
 
-from tacs.data import ContextDataset
+import torch
+from torch.utils.data import DataLoader
+
+from tacs.data import ContextDataset, build_cifar10
 from tacs.device import configure_stdout
 from tacs.losses import TACSLoss
 from tacs.model import TACSModel
@@ -26,23 +28,26 @@ from tacs.model import TACSModel
 
 def main() -> None:
     configure_stdout()
+    parser = argparse.ArgumentParser(description="Kiểm tra pipeline TACS trên CIFAR-10 thật.")
+    parser.add_argument("--data-root", type=str, default="data")
+    parser.add_argument("--split-file", type=str, default="data/splits/cifar10_seed42.json")
+    args = parser.parse_args()
     print("=" * 70)
     print("  KIỂM TRA TÍCH HỢP DATALOADER -> TACSMODEL (GÓI 2 & GÓI 4)")
     print("=" * 70)
 
-    # 1. Khởi tạo dữ liệu giả lập chuẩn CIFAR-10
+    # 1. Nạp dữ liệu CIFAR-10 thật
     torch.manual_seed(42)
-    num_samples = 120
     num_classes = 10
     batch_size = 4
     num_candidates = 8
-
-    images = torch.randn(num_samples, 3, 32, 32)
-    targets = torch.randint(0, num_classes, (num_samples,))
-    full_dataset = TensorDataset(images, targets)
-
-    query_dataset = Subset(full_dataset, list(range(80)))
-    candidate_dataset = Subset(full_dataset, list(range(80, num_samples)))
+    datasets = build_cifar10(
+        root=args.data_root,
+        split_file=args.split_file,
+        download=False,
+    )
+    query_dataset = datasets.query_train
+    candidate_dataset = datasets.candidate_pool
 
     print(f"[*] Query dataset size    : {len(query_dataset)}")
     print(f"[*] Candidate pool size   : {len(candidate_dataset)}")

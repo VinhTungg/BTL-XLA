@@ -12,14 +12,15 @@ Script này:
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
-from torch.utils.data import DataLoader, Subset, TensorDataset
+from torch.utils.data import DataLoader
 
-from tacs.data import ContextDataset
+from tacs.data import ContextDataset, build_cifar10
 from tacs.device import configure_stdout
 from tacs.visualize_batch import _denormalize_image, make_context_grid
 
@@ -28,31 +29,23 @@ CIFAR_CLASSES = [
     "dog", "frog", "horse", "ship", "truck"
 ]
 
-
-def create_mock_cifar10_pool(seed: int = 42) -> tuple[Subset, Subset]:
-    """Tạo tập dữ liệu mô phỏng CIFAR-10 chuẩn hóa để kiểm thử trực quan."""
-    generator = torch.Generator().manual_seed(seed)
-    
-    # 500 mẫu mô phỏng (chuẩn hóa theo mean/std của CIFAR-10)
-    # mean = (0.4914, 0.4822, 0.4465), std = (0.2470, 0.2435, 0.2616)
-    num_samples = 500
-    images = torch.randn(num_samples, 3, 32, 32, generator=generator)
-    # 10 lớp cân bằng
-    targets = torch.tensor([i % 10 for i in range(num_samples)], dtype=torch.long)
-    
-    dataset = TensorDataset(images, targets)
-    query_subset = Subset(dataset, list(range(100)))
-    candidate_subset = Subset(dataset, list(range(100, num_samples)))
-    return query_subset, candidate_subset
-
-
 def main() -> None:
     configure_stdout()
+    parser = argparse.ArgumentParser(description="Audit trực quan 20 query CIFAR-10 thật.")
+    parser.add_argument("--data-root", type=str, default="data")
+    parser.add_argument("--split-file", type=str, default="data/splits/cifar10_seed42.json")
+    args = parser.parse_args()
     print("=" * 80)
     print("   KIỂM TRA TRỰC QUAN 20 QUERIES & GHI NHẬN LỖI (GÓI 5 - THÀNH VIÊN 3)")
     print("=" * 80)
 
-    query_ds, cand_ds = create_mock_cifar10_pool(seed=42)
+    datasets = build_cifar10(
+        root=args.data_root,
+        split_file=args.split_file,
+        download=False,
+    )
+    query_ds = datasets.query_train
+    cand_ds = datasets.candidate_pool
     num_queries_to_test = 20
     num_candidates = 8
 
@@ -83,7 +76,7 @@ def main() -> None:
     print("-" * 95)
 
     leakage_detected = False
-    anomaly_detected = False
+    pixel_anomaly_detected = False
     audit_records = []
 
     for i in range(num_queries_to_test):
@@ -110,9 +103,11 @@ def main() -> None:
         has_nan = torch.isnan(denorm_q).any().item() or torch.isnan(denorm_c).any().item()
 
         pixel_ok = (0.0 <= min_val) and (max_val <= 1.0) and not has_nan
+        if not pixel_ok:
+            pixel_anomaly_detected = True
+
         if not pixel_ok or is_leaking:
             status = "FAIL"
-            anomaly_detected = True
         else:
             status = "PASS"
 
@@ -135,7 +130,7 @@ def main() -> None:
     print("-" * 95)
     print("\n--- TỔNG KẾT NGHIỆM THU KIỂM TRA TRỰC QUAN (GÓI 5) ---")
     print(f"[*] Rò rỉ dữ liệu (Query trùng Candidate Pool): {'CÓ (LỖI)' if leakage_detected else 'KHÔNG (0/20 query)'}")
-    print(f"[*] Dải giá trị hình ảnh [0, 1] hợp lệ        : {'KHÔNG HỢP LỆ' if anomaly_detected else 'ĐẠT (20/20 query)'}")
+    print(f"[*] Dải giá trị hình ảnh [0, 1] hợp lệ        : {'KHÔNG HỢP LỆ' if pixel_anomaly_detected else 'ĐẠT (20/20 query)'}")
     print(f"[*] Tỷ lệ candidate cùng lớp trung bình       : {sum(r['same_class'] for r in audit_records) / (num_queries_to_test * num_candidates) * 100:.2f}%")
     print(f"[*] Tỷ lệ candidate khác lớp trung bình       : {sum(r['diff_class'] for r in audit_records) / (num_queries_to_test * num_candidates) * 100:.2f}%")
 
