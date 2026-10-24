@@ -22,7 +22,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .baselines import BaselineModel
-from .data import ContextDataset, build_cifar10
+from .data import ContextDataset, FullPoolContextDataset, build_cifar10
 from .device import configure_stdout, resolve_device
 from .model import TACSModel, TinyVisionEncoder
 from .retrieval import (
@@ -31,6 +31,10 @@ from .retrieval import (
     TopKContextDataset,
     precompute_candidate_embeddings,
 )
+
+
+ENCODER_CHECKPOINT_SCHEMA_VERSION = 1
+EMBEDDING_CACHE_SCHEMA_VERSION = 1
 
 
 @dataclass
@@ -51,6 +55,8 @@ class ExperimentConfig:
     output_dir: str = "outputs/no_context"
     standard_encoder_path: str = "outputs/no_context/best_encoder.pt"
     topk_candidates: int = 32
+    selector_temperature: float = 0.1
+    policy_weight: float = 1.0
     dry_run: bool = False
     num_workers: int = 0
     eval_test: bool = False
@@ -73,6 +79,149 @@ def get_current_rss_mb() -> float:
     """Đo dung lượng RAM Resident Set Size (RSS) đang chiếm dụng theo MB."""
     process = psutil.Process()
     return round(process.memory_info().rss / (1024 * 1024), 2)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _candidate_indices_sha256(candidate_dataset: Dataset) -> str:
+    indices = (
+        candidate_dataset.indices
+        if isinstance(candidate_dataset, Subset)
+        else range(len(candidate_dataset))
+    )
+    digest = hashlib.sha256()
+    for index in indices:
+        digest.update(int(index).to_bytes(8, byteorder="little", signed=True))
+    return digest.hexdigest()
+
+
+def _load_standard_encoder(
+    config: ExperimentConfig,
+    device: torch.device,
+    expected_split_sha256: str | None = None,
+) -> tuple[TinyVisionEncoder, Path, str]:
+    encoder_path = Path(config.standard_encoder_path)
+    if not encoder_path.is_file():
+        raise RuntimeError(
+            "Similarity/Two-Stage yêu cầu standard encoder đã huấn luyện trên "
+            f"CIFAR-10, nhưng không tìm thấy: {encoder_path}"
+        )
+
+    payload = torch.load(encoder_path, map_location=device, weights_only=True)
+    if not isinstance(payload, dict) or not {
+        "encoder_state_dict",
+        "metadata",
+    }.issubset(payload):
+        raise RuntimeError(
+            f"Standard encoder {encoder_path} là checkpoint legacy/không có provenance. "
+            "Hãy train lại baseline no_context bằng trainer hiện tại."
+        )
+
+    metadata = payload["metadata"]
+    data_metadata = metadata.get("data", {}) if isinstance(metadata, dict) else {}
+    if (
+        not isinstance(metadata, dict)
+        or metadata.get("schema_version") != ENCODER_CHECKPOINT_SCHEMA_VERSION
+        or metadata.get("baseline") != "no_context"
+        or metadata.get("embedding_dim") != config.embedding_dim
+        or data_metadata.get("source") != "cifar10"
+        or (
+            expected_split_sha256 is not None
+            and data_metadata.get("split_sha256") != expected_split_sha256
+        )
+    ):
+        raise RuntimeError(
+            f"Standard encoder {encoder_path} không khớp schema, baseline, "
+            "embedding_dim hoặc provenance CIFAR-10."
+        )
+
+    full_sizes = data_metadata.get("full_sizes", {})
+    effective_sizes = data_metadata.get("effective_sizes", {})
+    if not config.dry_run and (
+        effective_sizes.get("query_train") != full_sizes.get("query_train")
+        or effective_sizes.get("validation") != full_sizes.get("validation")
+    ):
+        raise RuntimeError(
+            f"Standard encoder {encoder_path} được tạo bởi dry-run/tập con. "
+            "Hãy train no_context trên toàn bộ query_train và validation."
+        )
+
+    encoder = TinyVisionEncoder(config.embedding_dim).to(device)
+    try:
+        encoder.load_state_dict(payload["encoder_state_dict"], strict=True)
+    except (KeyError, RuntimeError) as error:
+        raise RuntimeError(
+            f"Trọng số standard encoder không tương thích: {encoder_path}"
+        ) from error
+    encoder.eval()
+    return encoder, encoder_path, _sha256_file(encoder_path)
+
+
+def _embedding_cache_metadata(
+    config: ExperimentConfig,
+    candidate_pool: Dataset,
+    split_sha256: str | None,
+    encoder_sha256: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": EMBEDDING_CACHE_SCHEMA_VERSION,
+        "dataset": "cifar10",
+        "split_sha256": split_sha256,
+        "candidate_count": len(candidate_pool),
+        "candidate_indices_sha256": _candidate_indices_sha256(candidate_pool),
+        "encoder_sha256": encoder_sha256,
+        "embedding_dim": config.embedding_dim,
+        "transform": "cifar10-evaluation-v1",
+        "normalization": "l2",
+    }
+
+
+def _load_or_rebuild_retriever(
+    config: ExperimentConfig,
+    candidate_pool: Dataset,
+    encoder: TinyVisionEncoder,
+    device: torch.device,
+    split_sha256: str | None,
+    encoder_sha256: str,
+) -> CosineSimilarityRetriever:
+    cache_dir = Path(config.output_dir).parent / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / "candidate_pool_embeddings.pt"
+    expected_metadata = _embedding_cache_metadata(
+        config,
+        candidate_pool,
+        split_sha256,
+        encoder_sha256,
+    )
+
+    try:
+        return CosineSimilarityRetriever.from_cache(
+            cache_file,
+            candidate_dataset=candidate_pool,
+            expected_metadata=expected_metadata,
+        )
+    except (FileNotFoundError, KeyError, RuntimeError, ValueError) as error:
+        print(f"Rebuilding candidate embedding cache: {error}")
+
+    precompute_candidate_embeddings(
+        candidate_dataset=candidate_pool,
+        encoder=encoder,
+        batch_size=config.batch_size,
+        device=device,
+        output_path=cache_file,
+        metadata=expected_metadata,
+    )
+    return CosineSimilarityRetriever.from_cache(
+        cache_file,
+        candidate_dataset=candidate_pool,
+        expected_metadata=expected_metadata,
+    )
 
 
 def build_dataloaders(
@@ -129,7 +278,7 @@ def build_dataloaders(
     if config.baseline == "no_context":
         train_ds = query_train
         val_ds = validation
-        test_ds = test_set
+        test_ds = test_set if config.eval_test else None
 
     elif config.baseline == "random":
         train_ds = ContextDataset(
@@ -144,37 +293,31 @@ def build_dataloaders(
             num_candidates=1,
             seed=config.seed,
         )
-        test_ds = ContextDataset(
-            query_dataset=test_set,
-            candidate_dataset=candidate_pool,
-            num_candidates=1,
-            seed=config.seed,
+        test_ds = (
+            ContextDataset(
+                query_dataset=test_set,
+                candidate_dataset=candidate_pool,
+                num_candidates=1,
+                seed=config.seed,
+            )
+            if config.eval_test
+            else None
         )
 
     elif config.baseline == "similarity":
-        # Khóa encoder chuẩn từ Gói 2
-        encoder = TinyVisionEncoder(config.embedding_dim).to(device)
-        encoder_path = Path(config.standard_encoder_path)
-        if encoder_path.exists():
-            state = torch.load(encoder_path, map_location=device, weights_only=True)
-            encoder.load_state_dict(state)
-        encoder.eval()
-
-        # Cache candidate pool embeddings
-        cache_dir = Path(config.output_dir).parent / "cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / "candidate_pool_embeddings.pt"
-
-        if not cache_file.exists():
-            precompute_candidate_embeddings(
-                candidate_dataset=candidate_pool,
-                encoder=encoder,
-                batch_size=config.batch_size,
-                device=device,
-                output_path=cache_file,
-            )
-
-        retriever = CosineSimilarityRetriever.from_cache(cache_file, candidate_dataset=candidate_pool)
+        encoder, _, encoder_sha256 = _load_standard_encoder(
+            config,
+            device,
+            split_sha256,
+        )
+        retriever = _load_or_rebuild_retriever(
+            config,
+            candidate_pool,
+            encoder,
+            device,
+            split_sha256,
+            encoder_sha256,
+        )
 
         train_ds = SimilarityContextDataset(
             query_dataset=query_train,
@@ -192,55 +335,71 @@ def build_dataloaders(
             device=device,
             batch_size=config.batch_size,
         )
-        test_ds = SimilarityContextDataset(
-            query_dataset=test_set,
+        test_ds = (
+            SimilarityContextDataset(
+                query_dataset=test_set,
+                candidate_dataset=candidate_pool,
+                retriever=retriever,
+                encoder=encoder,
+                device=device,
+                batch_size=config.batch_size,
+            )
+            if config.eval_test
+            else None
+        )
+
+    elif config.baseline == "tacs":
+        train_ds = FullPoolContextDataset(
+            query_dataset=query_train,
+            candidate_dataset=candidate_pool,
+        )
+        val_ds = FullPoolContextDataset(
+            query_dataset=validation,
+            candidate_dataset=candidate_pool,
+        )
+        test_ds = (
+            FullPoolContextDataset(
+                query_dataset=test_set,
+                candidate_dataset=candidate_pool,
+            )
+            if config.eval_test
+            else None
+        )
+
+    elif config.baseline == "two_stage":
+        encoder, _, encoder_sha256 = _load_standard_encoder(
+            config,
+            device,
+            split_sha256,
+        )
+        retriever = _load_or_rebuild_retriever(
+            config,
+            candidate_pool,
+            encoder,
+            device,
+            split_sha256,
+            encoder_sha256,
+        )
+        train_ds = TopKContextDataset(
+            query_dataset=query_train,
             candidate_dataset=candidate_pool,
             retriever=retriever,
             encoder=encoder,
             device=device,
             batch_size=config.batch_size,
+            top_k=min(config.topk_candidates, len(candidate_pool)),
         )
-
-    elif config.baseline in {"tacs", "two_stage"}:
-        encoder = TinyVisionEncoder(config.embedding_dim).to(device)
-        if config.standard_encoder_path and Path(config.standard_encoder_path).exists():
-            state = torch.load(config.standard_encoder_path, map_location=device, weights_only=True)
-            encoder.load_state_dict(state)
-        encoder.eval()
-
-        cache_dir = Path(config.output_dir).parent / "cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        cache_file = cache_dir / "candidate_pool_embeddings.pt"
-        if not cache_file.exists():
-            precompute_candidate_embeddings(
-                candidate_dataset=candidate_pool,
-                encoder=encoder,
-                batch_size=config.batch_size,
-                device=device,
-                output_path=cache_file,
-            )
-
-        retriever = CosineSimilarityRetriever.from_cache(cache_file, candidate_dataset=candidate_pool)
-        if config.baseline == "two_stage":
-            train_ds = TopKContextDataset(
-                query_dataset=query_train,
-                candidate_dataset=candidate_pool,
-                retriever=retriever,
-                encoder=encoder,
-                device=device,
-                batch_size=config.batch_size,
-                top_k=min(config.topk_candidates, len(candidate_pool)),
-            )
-            val_ds = TopKContextDataset(
-                query_dataset=validation,
-                candidate_dataset=candidate_pool,
-                retriever=retriever,
-                encoder=encoder,
-                device=device,
-                batch_size=config.batch_size,
-                top_k=min(config.topk_candidates, len(candidate_pool)),
-            )
-            test_ds = TopKContextDataset(
+        val_ds = TopKContextDataset(
+            query_dataset=validation,
+            candidate_dataset=candidate_pool,
+            retriever=retriever,
+            encoder=encoder,
+            device=device,
+            batch_size=config.batch_size,
+            top_k=min(config.topk_candidates, len(candidate_pool)),
+        )
+        test_ds = (
+            TopKContextDataset(
                 query_dataset=test_set,
                 candidate_dataset=candidate_pool,
                 retriever=retriever,
@@ -249,25 +408,9 @@ def build_dataloaders(
                 batch_size=config.batch_size,
                 top_k=min(config.topk_candidates, len(candidate_pool)),
             )
-        else:
-            train_ds = ContextDataset(
-                query_dataset=query_train,
-                candidate_dataset=candidate_pool,
-                num_candidates=min(config.topk_candidates, len(candidate_pool)),
-                seed=config.seed,
-            )
-            val_ds = ContextDataset(
-                query_dataset=validation,
-                candidate_dataset=candidate_pool,
-                num_candidates=min(config.topk_candidates, len(candidate_pool)),
-                seed=config.seed,
-            )
-            test_ds = ContextDataset(
-                query_dataset=test_set,
-                candidate_dataset=candidate_pool,
-                num_candidates=min(config.topk_candidates, len(candidate_pool)),
-                seed=config.seed,
-            )
+            if config.eval_test
+            else None
+        )
     else:
         raise ValueError(f"Unknown baseline: {config.baseline}")
 
@@ -294,9 +437,28 @@ def build_dataloaders(
             num_workers=config.num_workers,
             drop_last=False,
         )
-        if config.eval_test
+        if test_ds is not None
         else None
     )
+
+    selection_info: dict[str, Any] | None = None
+    if config.baseline == "tacs":
+        selection_info = {
+            "strategy": "full_pool_tacs",
+            "retrieval_candidates_scanned": 0,
+            "selector_candidates": len(candidate_pool),
+            "candidate_bank_refresh": "once_per_train_or_evaluation_epoch",
+            "candidate_bank_gradient": False,
+        }
+    elif config.baseline == "two_stage":
+        selection_info = {
+            "strategy": "cosine_topk_then_tacs",
+            "retrieval_candidates_scanned": len(candidate_pool),
+            "selector_candidates": min(config.topk_candidates, len(candidate_pool)),
+            "candidate_bank_refresh": "per_batch_topk_candidates",
+            "candidate_bank_gradient": False,
+            "retrieval_cache": "validated_standard_encoder_embedding_cache",
+        }
 
     data_info = {
         "source": "cifar10",
@@ -308,8 +470,9 @@ def build_dataloaders(
             "query_train": len(train_ds),
             "candidate_pool": len(candidate_pool),
             "validation": len(val_ds),
-            "test": len(test_ds),
+            "test": len(test_set),
         },
+        "selection": selection_info,
     }
     return train_loader, val_loader, test_loader, candidate_pool, data_info
 
@@ -327,6 +490,51 @@ def unpack_batch(batch: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor |
     raise TypeError(f"Không hỗ trợ dạng batch: {type(batch)}")
 
 
+def _encode_full_candidate_bank(
+    model: TACSModel,
+    candidate_dataset: Dataset,
+    device: torch.device,
+    batch_size: int,
+) -> torch.Tensor:
+    """Encode the complete pool once without duplicating images per query.
+
+    The detached bank is refreshed for every train/evaluation epoch. Gradients
+    still update the shared selector encoder through the query branch.
+    """
+    encoder = model.selector.encoder
+    was_training = encoder.training
+    encoder.eval()
+    candidate_loader = DataLoader(
+        candidate_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
+    embeddings: list[torch.Tensor] = []
+    with torch.no_grad():
+        for images, _ in candidate_loader:
+            embeddings.append(encoder(images.to(device)).detach())
+    encoder.train(was_training)
+    return torch.cat(embeddings, dim=0)
+
+
+def _full_candidate_bank_for_loader(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if not isinstance(loader.dataset, FullPoolContextDataset):
+        return None
+    if not isinstance(model, TACSModel):
+        raise TypeError("FullPoolContextDataset yêu cầu TACSModel")
+    return _encode_full_candidate_bank(
+        model,
+        loader.dataset.candidate_dataset,
+        device,
+        batch_size=loader.batch_size or 1,
+    )
+
+
 def train_one_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -336,10 +544,13 @@ def train_one_epoch(
 ) -> dict[str, float]:
     """Huấn luyện 1 epoch."""
     model.train()
+    selection_started_at = time.perf_counter()
+    full_candidate_bank = _full_candidate_bank_for_loader(model, loader, device)
+    runtime_selection_time = time.perf_counter() - selection_started_at
+    loop_started_at = time.perf_counter()
     total_loss = 0.0
     correct = 0
     total = 0
-    start_time = time.perf_counter()
 
     for batch in loader:
         query, target, candidates = unpack_batch(batch)
@@ -349,7 +560,10 @@ def train_one_epoch(
             candidates = candidates.to(device)
 
         optimizer.zero_grad()
-        logits = model(query, candidates)
+        if full_candidate_bank is not None:
+            logits = model.forward_embedding_bank(query, full_candidate_bank)
+        else:
+            logits = model(query, candidates)
         loss_value = criterion(logits, target)
         loss = loss_value.total if hasattr(loss_value, "total") else loss_value
         loss.backward()
@@ -361,16 +575,30 @@ def train_one_epoch(
         correct += (preds == target).sum().item()
         total += query.size(0)
 
-    elapsed = time.perf_counter() - start_time
+    model_time = time.perf_counter() - loop_started_at
+    selection_time = (
+        runtime_selection_time
+        if full_candidate_bank is not None
+        else float(getattr(loader.dataset, "precompute_time_s", 0.0))
+    )
+    actual_time = model_time + runtime_selection_time
+    end_to_end_time = model_time + selection_time
     avg_loss = total_loss / max(1, total)
     acc = correct / max(1, total)
-    throughput = total / max(1e-5, elapsed)
+    throughput = total / max(1e-5, end_to_end_time)
 
     return {
         "loss": round(avg_loss, 4),
         "accuracy": round(acc, 4),
         "throughput": round(throughput, 2),
-        "time": round(elapsed, 2),
+        "time": round(actual_time, 2),
+        "end_to_end_time_s": round(end_to_end_time, 4),
+        "model_time_s": round(model_time, 4),
+        "selection_precompute_time_s": round(selection_time, 4),
+        "latency_ms_per_query": round(
+            end_to_end_time * 1000 / max(1, total),
+            4,
+        ),
     }
 
 
@@ -382,10 +610,13 @@ def evaluate(
 ) -> dict[str, float]:
     """Đánh giá mô hình (không cập nhật gradient)."""
     model.eval()
+    selection_started_at = time.perf_counter()
+    full_candidate_bank = _full_candidate_bank_for_loader(model, loader, device)
+    runtime_selection_time = time.perf_counter() - selection_started_at
+    loop_started_at = time.perf_counter()
     total_loss = 0.0
     correct = 0
     total = 0
-    start_time = time.perf_counter()
 
     with torch.no_grad():
         for batch in loader:
@@ -395,7 +626,10 @@ def evaluate(
             if candidates is not None:
                 candidates = candidates.to(device)
 
-            logits = model(query, candidates)
+            if full_candidate_bank is not None:
+                logits = model.forward_embedding_bank(query, full_candidate_bank)
+            else:
+                logits = model(query, candidates)
             loss_value = criterion(logits, target)
             loss = loss_value.total if hasattr(loss_value, "total") else loss_value
 
@@ -405,16 +639,30 @@ def evaluate(
             correct += (preds == target).sum().item()
             total += query.size(0)
 
-    elapsed = time.perf_counter() - start_time
+    model_time = time.perf_counter() - loop_started_at
+    selection_time = (
+        runtime_selection_time
+        if full_candidate_bank is not None
+        else float(getattr(loader.dataset, "precompute_time_s", 0.0))
+    )
+    actual_time = model_time + runtime_selection_time
+    end_to_end_time = model_time + selection_time
     avg_loss = total_loss / max(1, total)
     acc = correct / max(1, total)
-    throughput = total / max(1e-5, elapsed)
+    throughput = total / max(1e-5, end_to_end_time)
 
     return {
         "loss": round(avg_loss, 4),
         "accuracy": round(acc, 4),
         "throughput": round(throughput, 2),
-        "time": round(elapsed, 2),
+        "time": round(actual_time, 2),
+        "end_to_end_time_s": round(end_to_end_time, 4),
+        "model_time_s": round(model_time, 4),
+        "selection_precompute_time_s": round(selection_time, 4),
+        "latency_ms_per_query": round(
+            end_to_end_time * 1000 / max(1, total),
+            4,
+        ),
     }
 
 
@@ -424,10 +672,12 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     torch.manual_seed(config.seed)
     device = resolve_device(config.device)
 
+    data_setup_started_at = time.perf_counter()
     train_loader, val_loader, test_loader, candidate_pool, data_info = build_dataloaders(
         config,
         device,
     )
+    data_setup_time = time.perf_counter() - data_setup_started_at
 
     out_dir = Path(config.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -437,12 +687,21 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         f"effective sizes: {data_info['effective_sizes']}"
     )
 
+    # Retrieval setup may instantiate an encoder internally. Resetting here
+    # gives TACS Full and Two-Stage identical model initialisation for one seed.
+    torch.manual_seed(config.seed)
+
     if config.baseline in {"tacs", "two_stage"}:
-        model = TACSModel(num_classes=config.num_classes, embedding_dim=config.embedding_dim).to(device)
+        model = TACSModel(
+            num_classes=config.num_classes,
+            embedding_dim=config.embedding_dim,
+            temperature=config.selector_temperature,
+            detach_candidate_embeddings=True,
+        ).to(device)
 
         def tacs_criterion(outputs, targets):
             from .losses import TACSLoss
-            return TACSLoss()(outputs, targets)
+            return TACSLoss(policy_weight=config.policy_weight)(outputs, targets)
 
         criterion = tacs_criterion
     else:
@@ -483,6 +742,20 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             "val_acc": val_res["accuracy"],
             "throughput_qps": train_res["throughput"],
             "epoch_time_s": train_res["time"],
+            "train_end_to_end_time_s": train_res["end_to_end_time_s"],
+            "train_model_time_s": train_res["model_time_s"],
+            "train_selection_precompute_time_s": train_res[
+                "selection_precompute_time_s"
+            ],
+            "train_latency_ms_per_query": train_res["latency_ms_per_query"],
+            "val_throughput_qps": val_res["throughput"],
+            "val_time_s": val_res["time"],
+            "val_end_to_end_time_s": val_res["end_to_end_time_s"],
+            "val_model_time_s": val_res["model_time_s"],
+            "val_selection_precompute_time_s": val_res[
+                "selection_precompute_time_s"
+            ],
+            "val_latency_ms_per_query": val_res["latency_ms_per_query"],
             "rss_mb": rss_mb,
         }
         history.append(epoch_record)
@@ -509,9 +782,21 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
 
             # Lưu encoder chuẩn (đặc biệt quan trọng ở No-context cho Gói 2)
             encoder = model.selector.encoder if isinstance(model, TACSModel) else model.encoder
-            torch.save(encoder.state_dict(), out_dir / "best_encoder.pt")
+            torch.save(
+                {
+                    "encoder_state_dict": encoder.state_dict(),
+                    "metadata": {
+                        "schema_version": ENCODER_CHECKPOINT_SCHEMA_VERSION,
+                        "baseline": config.baseline,
+                        "embedding_dim": config.embedding_dim,
+                        "data": data_info,
+                    },
+                },
+                out_dir / "best_encoder.pt",
+            )
 
-    total_time = round(time.perf_counter() - total_train_start, 2)
+    training_time = time.perf_counter() - total_train_start
+    total_time = round(training_time, 2)
 
     # Đánh giá test set (nếu yêu cầu)
     test_result = None
@@ -526,8 +811,21 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         "seed": config.seed,
         "epochs": epochs,
         "data": data_info,
+        "selection": data_info["selection"],
+        "selector_temperature": (
+            config.selector_temperature
+            if config.baseline in {"tacs", "two_stage"}
+            else None
+        ),
+        "policy_weight": (
+            config.policy_weight
+            if config.baseline in {"tacs", "two_stage"}
+            else None
+        ),
         "best_val_acc": round(best_val_acc, 4),
+        "data_setup_time_s": round(data_setup_time, 4),
         "total_time_s": total_time,
+        "end_to_end_time_s": round(data_setup_time + training_time, 4),
         "test_result": test_result,
         "history": history,
     }
@@ -561,7 +859,19 @@ def parse_args() -> ExperimentConfig:
         "--topk-candidates",
         type=int,
         default=32,
-        help="Số candidate đầu vào cho TACS/Two-Stage",
+        help="Số candidate cosine top-k đầu vào cho Two-Stage (TACS luôn dùng toàn pool)",
+    )
+    parser.add_argument(
+        "--selector-temperature",
+        type=float,
+        default=0.1,
+        help="Temperature Gumbel-Softmax của TACS selector",
+    )
+    parser.add_argument(
+        "--policy-weight",
+        type=float,
+        default=1.0,
+        help="Trọng số policy loss trong TACSLoss",
     )
     parser.add_argument(
         "--dry-run",
@@ -573,6 +883,11 @@ def parse_args() -> ExperimentConfig:
     args = parser.parse_args()
     if args.topk_candidates <= 0:
         parser.error("--topk-candidates phải lớn hơn 0")
+
+    if args.selector_temperature <= 0:
+        parser.error("--selector-temperature phải lớn hơn 0")
+    if args.policy_weight < 0:
+        parser.error("--policy-weight không được âm")
 
     out = args.output_dir if args.output_dir else f"outputs/{args.baseline}"
     return ExperimentConfig(
@@ -587,6 +902,8 @@ def parse_args() -> ExperimentConfig:
         output_dir=out,
         standard_encoder_path=args.standard_encoder,
         topk_candidates=args.topk_candidates,
+        selector_temperature=args.selector_temperature,
+        policy_weight=args.policy_weight,
         dry_run=args.dry_run,
         eval_test=args.eval_test,
     )

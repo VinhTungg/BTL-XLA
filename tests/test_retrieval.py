@@ -44,10 +44,36 @@ class RetrievalTest(unittest.TestCase):
             self.assertTrue(cache_file.exists())
             self.assertEqual(res["embeddings"].shape, (self.num_candidates, self.embedding_dim))
             self.assertEqual(len(res["indices"]), self.num_candidates)
+            self.assertEqual(res["metadata"], {})
 
             # Kiểm tra các vector đã được chuẩn hóa L2
             norms = torch.norm(res["embeddings"], p=2, dim=-1)
             self.assertTrue(torch.allclose(norms, torch.ones(self.num_candidates), atol=1e-5))
+
+    def test_cache_rejects_mismatched_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_file = Path(tmp_dir) / "candidate_embeddings.pt"
+            metadata = {
+                "schema_version": 1,
+                "candidate_count": self.num_candidates,
+                "encoder_sha256": "encoder-a",
+            }
+            precompute_candidate_embeddings(
+                candidate_dataset=self.candidate_dataset,
+                encoder=self.encoder,
+                output_path=cache_file,
+                metadata=metadata,
+            )
+
+            CosineSimilarityRetriever.from_cache(
+                cache_file,
+                expected_metadata=metadata,
+            )
+            with self.assertRaisesRegex(ValueError, "provenance"):
+                CosineSimilarityRetriever.from_cache(
+                    cache_file,
+                    expected_metadata={**metadata, "encoder_sha256": "encoder-b"},
+                )
 
     def test_cosine_similarity_retrieval_matches_manual_dot_product(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

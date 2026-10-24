@@ -77,6 +77,28 @@ File [src/tacs/__init__.py](../src/tacs/__init__.py) đã được bổ sung exp
 
 Điều này giúp dễ dàng import trong test và các script cần dùng lại model.
 
+### 3.4. Sửa đúng định nghĩa TACS Full và phép so sánh
+
+Mode `tacs` trước đây chỉ lấy ngẫu nhiên `topk_candidates`, vì vậy chưa thực sự
+đánh giá toàn bộ candidate pool. Pipeline hiện tại đã tách rõ:
+
+- **TACS Full:** selector chấm toàn bộ 9.000 candidate cho mỗi query thông qua
+  một embedding bank dùng chung, được làm mới mỗi train/evaluation epoch.
+- **Two-Stage:** standard encoder quét 9.000 candidate bằng cosine, giữ top-k,
+  sau đó TACS selector chỉ đánh giá k candidate này.
+
+Embedding bank của TACS Full được detach để tránh giữ graph của 9.000 ảnh và
+không bị nhân bản theo batch. Nhánh candidate của Two-Stage cũng được detach để
+hai mode dùng cùng cơ chế gradient; selector encoder vẫn được cập nhật qua nhánh
+query. Đây là lựa chọn triển khai có giới hạn bộ nhớ và được ghi rõ trong metadata.
+
+Temperature được dùng nhất quán cho gradient của Gumbel-Softmax relaxation;
+validation/test luôn chọn argmax xác định. Policy log-probability vẫn dùng
+`softmax(scores)` đúng với phân phối hard Gumbel-Max. Model của TACS Full và
+Two-Stage được khởi tạo lại từ cùng seed sau bước chuẩn bị dữ liệu/retrieval.
+`metrics.json` bổ sung strategy, số candidate được quét/chấm điểm, thời gian
+setup/retrieval, latency end-to-end mỗi query và throughput validation.
+
 ---
 
 ## 4. Kiểm thử và smoke test đã thực hiện
@@ -90,7 +112,10 @@ $env:PYTHONPATH = "src"
 python -m unittest discover -s tests -v
 ```
 
-Kết quả chạy gần nhất do thành viên xác nhận: **26/26 test đạt (`OK`)**, trong đó có 1 integration test CIFAR-10 thật được bật riêng. Nói đơn giản, các bài kiểm tra cho thấy những phần chính của chương trình chạy đúng; riêng TACS và Two-Stage cũng đã chạy thử được với một lượng nhỏ ảnh thật. Đây **chưa phải** kết quả huấn luyện đầy đủ hay so sánh hiệu năng mô hình.
+Kết quả chạy gần nhất: suite mặc định có **34 test, 33 đạt và 1 integration
+test được skip theo thiết kế**. Khi bật riêng integration CIFAR-10 thật, bài đó
+đạt **1/1 (`OK`)**. Đây **chưa phải** kết quả huấn luyện đầy đủ hay so sánh
+hiệu năng mô hình.
 
 Các test kiểm tra những phần như:
 - top-k retrieval: xếp hạng, giới hạn theo số candidate và từ chối `top_k` không hợp lệ;
@@ -116,7 +141,10 @@ Các file kết quả nằm trong `outputs/smoke/tacs/` và `outputs/smoke/two_s
 | TACS | 100% | 124.38 query/s | 614.97 MB | Chưa đánh giá |
 | Two-Stage | 87.5% | 141.87 query/s | 659.68 MB | Chưa đánh giá |
 
-**Các con số trên chỉ là kết quả smoke test với một epoch và tập mẫu nhỏ; không phải kết quả CIFAR-10 để so sánh hay đưa vào kết luận thực nghiệm.** `test_result` trong cả hai file metrics là `null`.
+**Các con số trên là artifact smoke cũ, được tạo trước khi sửa TACS thành
+full-pool; không được dùng để so sánh hay đưa vào kết luận thực nghiệm.** Cần
+chạy lại hai mode bằng code hiện tại; `test_result` trong các file cũ cũng là
+`null`.
 
 ### 4.3. Kiểm soát nguồn dữ liệu trước khi chạy thật
 
@@ -124,6 +152,8 @@ Các file kết quả nằm trong `outputs/smoke/tacs/` và `outputs/smoke/two_s
 > **Cập nhật 2026-10-24:** trainer đã loại bỏ hoàn toàn đường chạy mock. Lỗi nạp CIFAR-10 sẽ dừng lần chạy trước khi tạo output; `--dry-run` vẫn dùng dữ liệu thật. `metrics.json` ghi nguồn dữ liệu, kích thước tập và hash file split.
 
 Trước khi train chính thức, vẫn phải xác nhận `data.source=cifar10`, đúng split và đủ số lượng mẫu trong `metrics.json`. Các artifact baseline cũ được sinh từ mock không được dùng làm kết quả CIFAR-10.
+
+Standard encoder cho Similarity/Two-Stage giờ bắt buộc có metadata của lần train `no_context` trên CIFAR-10. Cache embedding được ràng buộc với hash split, candidate indices, encoder và `embedding_dim`; cache 100 mẫu cũ hoặc cache legacy sẽ bị tái tạo thay vì được dùng lại.
 
 ### 4.4. Kiểm thử tích hợp Tuần 3 trên CIFAR-10 thật
 
@@ -197,6 +227,9 @@ Các việc **chưa hoàn tất**:
 
 ## 7. Kết luận
 
-Phần triển khai TACS Full và pipeline Two-Stage đã được tích hợp. Theo kết quả chạy gần nhất, **26/26 test đạt**; trong đó integration test CIFAR-10 thật xác nhận chương trình đọc được dữ liệu và chạy thử train/evaluate cơ bản cho TACS/Two-Stage. Hiểu đơn giản: các phần code được kiểm tra đều chạy qua, nhưng đây chưa phải kết quả huấn luyện đầy đủ hay bằng chứng mô hình đạt độ chính xác tốt.
+Phần triển khai TACS Full và pipeline Two-Stage đã được tách đúng về candidate
+scope. Suite mặc định đạt **33/33 test được chạy** và skip 1 integration theo
+thiết kế; integration CIFAR-10 thật đạt **1/1** khi bật riêng. Các kết quả này
+xác nhận đường chạy, không phải bằng chứng về độ chính xác sau huấn luyện đầy đủ.
 
 **Trạng thái bàn giao:** trainer đã fail-fast khi CIFAR-10 lỗi và ghi provenance dữ liệu. Tuy nhiên, chưa có kết quả train/test CIFAR-10 đầy đủ cho `tacs` và `two_stage`; chưa thể kết luận accuracy, latency hay mức sử dụng bộ nhớ của chúng trên dữ liệu thật.

@@ -32,7 +32,35 @@ class TACSModelTest(unittest.TestCase):
         second = self.model(self.query, self.candidates).selection_weights
         self.assertTrue(torch.equal(first, second))
 
+    def test_full_pool_embedding_bank_scores_every_candidate(self) -> None:
+        self.model.eval()
+        full_pool = torch.randn(11, 16)
+
+        output = self.model.forward_embedding_bank(self.query, full_pool)
+
+        self.assertEqual(output.selector_scores.shape, (3, 11))
+        self.assertEqual(output.selection_weights.shape, (3, 11))
+        self.assertTrue(torch.equal(output.selection_weights.sum(dim=1), torch.ones(3)))
+        self.assertEqual(output.selector_temperature, 0.1)
+
+    def test_detached_candidate_path_keeps_query_encoder_trainable(self) -> None:
+        model = TACSModel(
+            num_classes=4,
+            embedding_dim=16,
+            detach_candidate_embeddings=True,
+        )
+        candidates = self.candidates.clone().requires_grad_(True)
+
+        TACSLoss()(model(self.query, candidates), self.targets).total.backward()
+
+        self.assertIsNone(candidates.grad)
+        encoder_grad = sum(
+            parameter.grad.abs().sum().item()
+            for parameter in model.selector.encoder.parameters()
+            if parameter.grad is not None
+        )
+        self.assertGreater(encoder_grad, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
-

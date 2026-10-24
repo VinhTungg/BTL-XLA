@@ -140,6 +140,14 @@ class TrainingInfrastructureTest(unittest.TestCase):
                     "test": 14,
                 },
             )
+            encoder_payload = torch.load(
+                out1 / "best_encoder.pt",
+                map_location="cpu",
+                weights_only=True,
+            )
+            self.assertIn("encoder_state_dict", encoder_payload)
+            self.assertEqual(encoder_payload["metadata"]["baseline"], "no_context")
+            self.assertEqual(encoder_payload["metadata"]["data"]["source"], "cifar10")
 
     def test_real_data_failure_does_not_fallback_or_write_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

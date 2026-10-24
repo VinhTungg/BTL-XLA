@@ -75,6 +75,36 @@ nó vẫn đọc CIFAR-10 thật. Trainer không còn chế độ dữ liệu mo
 Mỗi `metrics.json` ghi rõ `data.source`, kích thước các tập và hash của
 file split để xác minh kết quả được tạo từ đúng dữ liệu.
 
+## Standard encoder và cache retrieval
+
+Phải train `no_context` trước khi chạy `similarity` hoặc `two_stage`.
+Hai mode retrieval chỉ chấp nhận `best_encoder.pt` có metadata xác nhận
+baseline `no_context`, CIFAR-10 và đúng `embedding_dim`. Checkpoint cũ không có
+provenance sẽ bị từ chối và cần train lại.
+
+Cache candidate embedding được kiểm tra bằng hash của split, danh sách
+candidate, standard encoder và embedding dimension. Cache cũ, sai kích thước
+hoặc không khớp checkpoint sẽ được tự động tái tạo.
+
+## TACS Full và Two-Stage
+
+- `--baseline tacs` chấm điểm **toàn bộ candidate pool** cho mỗi query. Candidate
+  được mã hóa thành một bank dùng chung, làm mới mỗi epoch, nên DataLoader không
+  nhân bản 9.000 ảnh cho từng query. Bank được detach để giới hạn bộ nhớ; encoder
+  vẫn nhận gradient qua nhánh query.
+- `--baseline two_stage --topk-candidates 32` quét toàn pool bằng cosine từ
+  standard encoder, sau đó chỉ đưa top-32 vào TACS selector.
+- `--topk-candidates` chỉ tác động đến Two-Stage, không thu nhỏ TACS Full.
+- Hai mode dùng cùng kiến trúc và cùng khởi tạo model theo seed. Có thể đặt
+  `--selector-temperature` và `--policy-weight`. Temperature điều khiển gradient
+  của Gumbel-Softmax relaxation; validation/test luôn chọn argmax xác định.
+- Để so sánh cùng cơ chế gradient và giữ bộ nhớ ổn định, candidate embedding ở
+  cả hai mode đều detach; selector encoder vẫn học qua query embedding.
+
+`metrics.json` ghi strategy, số candidate bị retrieval quét, số candidate được
+selector đánh giá, thời gian setup/retrieval, latency/query end-to-end và
+throughput validation để việc so sánh không nhầm giữa Full và top-k.
+
 ## Chạy smoke training
 
 ```powershell

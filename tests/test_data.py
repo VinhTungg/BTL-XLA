@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader, Subset, TensorDataset
 from tacs import TACSLoss, TACSModel
 from tacs.data import (
     ContextDataset,
+    FullPoolContextDataset,
     SplitIndices,
     stratified_split,
 )
@@ -267,6 +268,18 @@ class ContextDatasetTest(unittest.TestCase):
             total_gradient,
             0.0,
         )
+
+    def test_full_pool_wrapper_does_not_duplicate_candidate_images(self) -> None:
+        dataset = FullPoolContextDataset(
+            query_dataset=self.query_dataset,
+            candidate_dataset=self.candidate_dataset,
+        )
+        batch = next(iter(DataLoader(dataset, batch_size=4, shuffle=False)))
+
+        self.assertEqual(batch["query"].shape, (4, 3, 32, 32))
+        self.assertNotIn("candidates", batch)
+        self.assertIs(dataset.candidate_dataset, self.candidate_dataset)
+        self.assertEqual(len(dataset.candidate_dataset), 10)
 
 
 if __name__ == "__main__":

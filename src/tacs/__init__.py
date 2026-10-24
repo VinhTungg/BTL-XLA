@@ -1,6 +1,7 @@
 """Minimal, testable TACS implementation."""
 
 from .baselines import BaselineModel
+from .data import FullPoolContextDataset
 from .losses import TACSLoss, TACSLossOutput
 from .model import TACSModel, TACSOutput, TinyVisionEncoder
 from .retrieval import (
@@ -26,6 +27,7 @@ __all__ = [
     "TACSLoss",
     "TACSLossOutput",
     "BaselineModel",
+    "FullPoolContextDataset",
     "CosineSimilarityRetriever",
     "SimilarityContextDataset",
     "TopKContextDataset",

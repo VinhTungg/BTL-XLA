@@ -28,10 +28,12 @@ class TACSLoss(nn.Module):
         reward = (no_context_loss - context_loss).detach()
         advantage = (reward - reward.mean()) / (reward.std(unbiased=False) + self.eps)
         chosen_log_probability = (
-            F.log_softmax(output.selector_scores, dim=-1) * output.selection_weights.detach()
+            # Hard Gumbel-Max samples from softmax(scores); temperature only
+            # controls the straight-through relaxation gradient.
+            F.log_softmax(output.selector_scores, dim=-1)
+            * output.selection_weights.detach()
         ).sum(dim=-1)
         policy_loss = -(chosen_log_probability * advantage).mean()
         task_loss = context_loss.mean()
         total = task_loss + self.policy_weight * policy_loss
         return TACSLossOutput(total, task_loss, policy_loss, reward.mean())
-

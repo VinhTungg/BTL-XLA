@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import time
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,7 @@ def precompute_candidate_embeddings(
     batch_size: int = 128,
     device: torch.device | str = "cpu",
     output_path: str | Path | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Tiền tính toán toàn bộ embedding cho candidate pool và lưu cache."""
     device = torch.device(device)
@@ -66,6 +69,7 @@ def precompute_candidate_embeddings(
         "indices": indices_tensor,
         "embedding_dim": embeddings_tensor.shape[-1],
         "num_candidates": len(candidate_dataset),
+        "metadata": metadata or {},
     }
 
     if output_path is not None:
@@ -96,13 +100,73 @@ class CosineSimilarityRetriever:
         cls,
         cache_path: str | Path,
         candidate_dataset: Dataset | None = None,
+        expected_metadata: dict[str, Any] | None = None,
     ) -> "CosineSimilarityRetriever":
         """Nạp retriever từ file cache embedding đã lưu."""
         data = torch.load(cache_path, map_location="cpu", weights_only=True)
+        required_keys = {
+            "embeddings",
+            "indices",
+            "targets",
+            "embedding_dim",
+            "num_candidates",
+            "metadata",
+        }
+        missing_keys = required_keys.difference(data)
+        if missing_keys:
+            raise ValueError(
+                f"Cache embedding thiếu trường bắt buộc: {sorted(missing_keys)}"
+            )
+
+        embeddings = data["embeddings"]
+        indices = data["indices"]
+        targets = data["targets"]
+        if embeddings.ndim != 2:
+            raise ValueError("Cache embeddings phải có shape [N, D]")
+        candidate_count, embedding_dim = embeddings.shape
+        if (
+            int(data["num_candidates"]) != candidate_count
+            or int(data["embedding_dim"]) != embedding_dim
+            or indices.ndim != 1
+            or targets.ndim != 1
+            or len(indices) != candidate_count
+            or len(targets) != candidate_count
+        ):
+            raise ValueError("Cache embedding có metadata kích thước không nhất quán")
+
+        metadata = data["metadata"]
+        if not isinstance(metadata, dict):
+            raise ValueError("Cache embedding có metadata không hợp lệ")
+        if candidate_dataset is not None and len(candidate_dataset) != candidate_count:
+            raise ValueError(
+                "Cache embedding không khớp kích thước candidate dataset hiện tại"
+            )
+        if (
+            "candidate_count" in metadata
+            and int(metadata["candidate_count"]) != candidate_count
+        ):
+            raise ValueError("Cache embedding có candidate_count provenance không hợp lệ")
+        if "embedding_dim" in metadata and int(metadata["embedding_dim"]) != embedding_dim:
+            raise ValueError("Cache embedding có embedding_dim provenance không hợp lệ")
+        if "candidate_indices_sha256" in metadata:
+            indices_digest = hashlib.sha256()
+            for index in indices.tolist():
+                indices_digest.update(int(index).to_bytes(8, byteorder="little", signed=True))
+            if metadata["candidate_indices_sha256"] != indices_digest.hexdigest():
+                raise ValueError("Cache embedding có fingerprint candidate indices không hợp lệ")
+        if expected_metadata is not None:
+            mismatched = {
+                key: {"expected": expected, "actual": metadata.get(key)}
+                for key, expected in expected_metadata.items()
+                if metadata.get(key) != expected
+            }
+            if mismatched:
+                raise ValueError(f"Cache embedding không khớp provenance: {mismatched}")
+
         return cls(
-            candidate_embeddings=data["embeddings"],
-            candidate_indices=data["indices"],
-            candidate_targets=data["targets"],
+            candidate_embeddings=embeddings,
+            candidate_indices=indices,
+            candidate_targets=targets,
             candidate_dataset=candidate_dataset,
         )
 
@@ -247,8 +311,11 @@ class TopKContextDataset(Dataset):
         self.retriever = retriever
         self.top_k = max(1, top_k)
         self.cached_assignments: list[list[tuple[int, float]]] = []
+        self.precompute_time_s = 0.0
         if encoder is not None:
+            started_at = time.perf_counter()
             self._precompute_assignments(encoder, device=device, batch_size=batch_size)
+            self.precompute_time_s = time.perf_counter() - started_at
 
     def _precompute_assignments(
         self,

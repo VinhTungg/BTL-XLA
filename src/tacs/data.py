@@ -444,3 +444,35 @@ class ContextDataset(Dataset):
             "candidate_indices": candidate_indices,
             "candidate_targets": candidate_targets,
         }
+
+
+class FullPoolContextDataset(Dataset):
+    """Expose queries while keeping one shared, complete candidate pool.
+
+    Returning the whole pool from ``__getitem__`` would make the DataLoader
+    duplicate all candidate images for every query in a batch.  The trainer
+    recognises this wrapper and builds one shared candidate embedding bank per
+    epoch instead.
+    """
+
+    def __init__(self, query_dataset: Dataset, candidate_dataset: Dataset) -> None:
+        if len(candidate_dataset) == 0:
+            raise ValueError("candidate_dataset không được rỗng")
+        self.query_dataset = query_dataset
+        self.candidate_dataset = candidate_dataset
+
+    def __len__(self) -> int:
+        return len(self.query_dataset)
+
+    def __getitem__(self, query_position: int) -> dict[str, torch.Tensor]:
+        query_image, query_target = self.query_dataset[query_position]
+        query_index = (
+            self.query_dataset.indices[query_position]
+            if isinstance(self.query_dataset, Subset)
+            else query_position
+        )
+        return {
+            "query": query_image,
+            "target": torch.as_tensor(query_target, dtype=torch.long),
+            "query_index": torch.tensor(query_index, dtype=torch.long),
+        }

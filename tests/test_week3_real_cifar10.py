@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, Subset
 
-from tacs.data import ContextDataset, build_cifar10
+from tacs.data import FullPoolContextDataset, build_cifar10
 from tacs.losses import TACSLoss
 from tacs.model import TACSModel, TinyVisionEncoder
 from tacs.retrieval import (
@@ -64,17 +64,13 @@ class Week3RealCIFAR10IntegrationTest(unittest.TestCase):
                 candidate_dataset=datasets.candidate_pool,
             )
 
-            tacs_train = ContextDataset(
+            tacs_train = FullPoolContextDataset(
                 query_dataset=query_subset,
                 candidate_dataset=datasets.candidate_pool,
-                num_candidates=4,
-                seed=42,
             )
-            tacs_validation = ContextDataset(
+            tacs_validation = FullPoolContextDataset(
                 query_dataset=validation_subset,
                 candidate_dataset=datasets.candidate_pool,
-                num_candidates=4,
-                seed=42,
             )
             two_stage_train = TopKContextDataset(
                 query_dataset=query_subset,
