@@ -48,7 +48,11 @@ def run(
 
     model = TACSModel(num_classes=cifar_num_classes(dataset), embedding_dim=32).to(device)
     objective = TACSLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=max(1, steps),
+    )
     batches = iter(loader)
     for step in range(1, steps + 1):
         try:
@@ -63,10 +67,12 @@ def run(
         optimizer.zero_grad()
         loss.total.backward()
         optimizer.step()
+        learning_rate = optimizer.param_groups[0]["lr"]
+        scheduler.step()
         print(
             f"step={step} total={loss.total.item():.4f} "
             f"task={loss.task.item():.4f} policy={loss.policy.item():.4f} "
-            f"reward={loss.mean_reward.item():.4f}"
+            f"reward={loss.mean_reward.item():.4f} lr={learning_rate:.3e}"
         )
 
 

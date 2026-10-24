@@ -58,9 +58,10 @@ class ExperimentConfig:
     backbone: str = "tiny"
     pretrained_backbone: bool = True
     seed: int = 42
-    epochs: int = 5
+    epochs: int | None = None
     batch_size: int = 64
     lr: float = 1e-3
+    min_lr: float = 0.0
     weight_decay: float = 1e-4
     embedding_dim: int | None = None
     image_size: int | None = None
@@ -83,6 +84,16 @@ class ExperimentConfig:
         self.dataset = normalize_cifar_name(self.dataset)
         if self.backbone not in {"tiny", "dinov3_vits16"}:
             raise ValueError(f"Backbone không được hỗ trợ: {self.backbone}")
+        if self.epochs is None:
+            self.epochs = 100 if self.backbone == "dinov3_vits16" else 5
+        elif self.epochs <= 0:
+            raise ValueError("epochs must be positive")
+        if self.lr <= 0:
+            raise ValueError("lr must be positive")
+        if self.min_lr < 0 or self.min_lr >= self.lr:
+            raise ValueError("min_lr must satisfy 0 <= min_lr < lr")
+        if self.weight_decay < 0:
+            raise ValueError("weight_decay must be non-negative")
         expected_classes = cifar_num_classes(self.dataset)
         if self.num_classes is None:
             self.num_classes = expected_classes
@@ -853,6 +864,25 @@ def evaluate(
     return {**result, **memory_monitor.result().as_dict()}
 
 
+def build_optimizer_and_scheduler(
+    model: nn.Module,
+    config: ExperimentConfig,
+) -> tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LRScheduler]:
+    """Create the AdamW + cosine recipe reported in the paper."""
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config.lr,
+        weight_decay=config.weight_decay,
+    )
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer,
+        T_max=config.epochs,
+        eta_min=config.min_lr,
+    )
+    return optimizer, scheduler
+
+
 def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     """Chạy toàn bộ quy trình huấn luyện và đánh giá cho 1 baseline."""
     configure_stdout()
@@ -914,11 +944,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         ).to(device)
         criterion = nn.CrossEntropyLoss()
 
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=config.lr,
-        weight_decay=config.weight_decay,
-    )
+    optimizer, scheduler = build_optimizer_and_scheduler(model, config)
 
     best_val_acc = -1.0
     history: list[dict[str, Any]] = []
@@ -932,12 +958,17 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         if hasattr(train_loader.dataset, "set_epoch"):
             train_loader.dataset.set_epoch(epoch)
 
+        learning_rate = float(optimizer.param_groups[0]["lr"])
         train_res = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_res = evaluate(model, val_loader, criterion, device)
+        scheduler.step()
+        next_learning_rate = float(optimizer.param_groups[0]["lr"])
         rss_mb = max(train_res["peak_rss_mb"], val_res["peak_rss_mb"])
 
         epoch_record = {
             "epoch": epoch,
+            "learning_rate": learning_rate,
+            "next_learning_rate": next_learning_rate,
             "train_loss": train_res["loss"],
             "train_acc": train_res["accuracy"],
             "val_loss": val_res["loss"],
@@ -976,7 +1007,8 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             f"  Epoch {epoch:02d}/{epochs:02d} | "
             f"Train Loss: {train_res['loss']:.4f}, Acc: {train_res['accuracy'] * 100:.2f}% | "
             f"Val Loss: {val_res['loss']:.4f}, Acc: {val_res['accuracy'] * 100:.2f}% | "
-            f"{train_res['throughput']} q/s | RAM: {rss_mb} MB"
+            f"LR: {learning_rate:.3e} | {train_res['throughput']} q/s | "
+            f"RAM: {rss_mb} MB"
         )
 
         # Lưu checkpoint tốt nhất
@@ -986,6 +1018,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
                 "val_accuracy": best_val_acc,
                 "val_loss": val_res["loss"],
                 "config": asdict(config),
@@ -1071,7 +1104,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     }
 
     metrics_payload = {
-        "metrics_schema_version": 2,
+        "metrics_schema_version": 3,
         "baseline": config.baseline,
         "seed": config.seed,
         "epochs": epochs,
@@ -1089,6 +1122,16 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             if config.baseline in {"tacs", "two_stage"}
             else None
         ),
+        "training_recipe": {
+            "optimizer": "AdamW",
+            "scheduler": "CosineAnnealingLR",
+            "initial_lr": config.lr,
+            "minimum_lr": config.min_lr,
+            "weight_decay": config.weight_decay,
+            "scheduler_t_max": config.epochs,
+            "configured_epochs": config.epochs,
+            "executed_epochs": epochs,
+        },
         "best_val_acc": round(best_val_acc, 4),
         "data_setup_time_s": round(data_setup_time, 4),
         "total_time_s": total_time,
@@ -1132,9 +1175,20 @@ def parse_args() -> ExperimentConfig:
         action="store_true",
         help="Không tải pretrained weights (chỉ dùng cho kiểm tra kỹ thuật)",
     )
-    parser.add_argument("--epochs", type=int, default=5, help="Số epochs")
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=None,
+        help="Số epochs (mặc định: tiny=5, DINOv3=100 theo paper)",
+    )
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument(
+        "--min-lr",
+        type=float,
+        default=0.0,
+        help="Learning rate tối thiểu của cosine annealing",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--data-root", type=str, default="data", help="Thư mục dữ liệu CIFAR")
@@ -1167,6 +1221,12 @@ def parse_args() -> ExperimentConfig:
     parser.add_argument("--eval-test", action="store_true", help="Đánh giá test set sau khi hoàn thành")
 
     args = parser.parse_args()
+    if args.epochs is not None and args.epochs <= 0:
+        parser.error("--epochs phải lớn hơn 0")
+    if args.lr <= 0:
+        parser.error("--lr phải lớn hơn 0")
+    if args.min_lr < 0 or args.min_lr >= args.lr:
+        parser.error("--min-lr phải thỏa 0 <= min-lr < lr")
     if args.topk_candidates <= 0:
         parser.error("--topk-candidates phải lớn hơn 0")
 
@@ -1183,6 +1243,7 @@ def parse_args() -> ExperimentConfig:
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
+        min_lr=args.min_lr,
         seed=args.seed,
         device=args.device,
         data_root=args.data_root,

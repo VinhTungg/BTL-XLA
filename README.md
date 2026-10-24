@@ -94,6 +94,13 @@ Lần chạy đầu cần Internet để tải weights và người dùng phải
 DINOv3 License. Thêm `--no-pretrained-backbone` chỉ để kiểm tra kỹ thuật;
 không dùng kết quả đó làm thí nghiệm báo cáo.
 
+Trainer dùng AdamW và `CosineAnnealingLR` cho mọi mô hình để việc so
+sánh công bằng. Profile DINOv3 mặc định 100 epochs theo paper; profile
+`tiny` giữ 5 epochs cho kiểm tra nhanh. Có thể ghi đè bằng `--epochs`,
+`--lr` và `--min-lr`. Mỗi epoch lưu `learning_rate` và
+`next_learning_rate` trong `metrics.json`; checkpoint lưu cả optimizer và
+scheduler state.
+
 ## Task Network ghép patch token
 
 Nhánh phân loại TACS bám theo Sec. 4.2 của paper: query và context được

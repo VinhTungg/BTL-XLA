@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tacs.baselines import BaselineModel
 from tacs.train import (
     ExperimentConfig,
+    build_optimizer_and_scheduler,
     build_dataloaders,
     evaluate,
     run_experiment,
@@ -82,12 +83,51 @@ class TrainingInfrastructureTest(unittest.TestCase):
 
         self.assertEqual(config.embedding_dim, 384)
         self.assertEqual(config.image_size, 256)
+        self.assertEqual(config.epochs, 100)
         self.assertEqual(
             config.output_dir,
             "outputs/cifar100/dinov3_vits16/no_context",
         )
         with self.assertRaisesRegex(ValueError, "embedding_dim=384"):
             ExperimentConfig(backbone="dinov3_vits16", embedding_dim=64)
+
+    def test_training_recipe_uses_adamw_and_cosine_annealing(self) -> None:
+        model = BaselineModel(num_classes=10, embedding_dim=16)
+        config = ExperimentConfig(epochs=4, lr=1e-3, min_lr=1e-5)
+
+        optimizer, scheduler = build_optimizer_and_scheduler(model, config)
+
+        self.assertIsInstance(optimizer, torch.optim.AdamW)
+        self.assertIsInstance(
+            scheduler,
+            torch.optim.lr_scheduler.CosineAnnealingLR,
+        )
+        self.assertEqual(scheduler.T_max, 4)
+        self.assertEqual(scheduler.eta_min, 1e-5)
+        learning_rates = [optimizer.param_groups[0]["lr"]]
+        for _ in range(4):
+            optimizer.step()
+            scheduler.step()
+            learning_rates.append(optimizer.param_groups[0]["lr"])
+        self.assertEqual(learning_rates[0], 1e-3)
+        self.assertAlmostEqual(learning_rates[-1], 1e-5)
+        self.assertTrue(
+            all(
+                current >= following
+                for current, following in zip(learning_rates, learning_rates[1:])
+            )
+        )
+
+    def test_training_config_rejects_invalid_schedule_values(self) -> None:
+        for kwargs in (
+            {"epochs": 0},
+            {"lr": 0.0},
+            {"lr": 1e-3, "min_lr": 1e-3},
+            {"weight_decay": -1e-4},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    ExperimentConfig(**kwargs)
 
     def test_validation_does_not_update_gradients(self) -> None:
         model = BaselineModel(num_classes=5, embedding_dim=16)
@@ -160,12 +200,19 @@ class TrainingInfrastructureTest(unittest.TestCase):
             self.assertEqual(res1["best_val_acc"], res2["best_val_acc"])
             self.assertEqual(res1["history"][0]["train_loss"], res2["history"][0]["train_loss"])
             self.assertEqual(res1["data"]["source"], "cifar10")
-            self.assertEqual(res1["metrics_schema_version"], 2)
+            self.assertEqual(res1["metrics_schema_version"], 3)
             self.assertEqual(res1["config"]["baseline"], "no_context")
             self.assertEqual(res1["selection"]["strategy"], "no_context")
             self.assertGreater(res1["memory"]["peak_rss_mb"], 0)
             self.assertIsNone(res1["memory"]["peak_vram_allocated_mb"])
             self.assertIn("train_peak_rss_mb", res1["history"][0])
+            self.assertEqual(res1["training_recipe"]["optimizer"], "AdamW")
+            self.assertEqual(
+                res1["training_recipe"]["scheduler"],
+                "CosineAnnealingLR",
+            )
+            self.assertEqual(res1["history"][0]["learning_rate"], 1e-3)
+            self.assertIn("next_learning_rate", res1["history"][0])
             self.assertEqual(
                 res1["data"]["full_sizes"],
                 {
@@ -183,6 +230,12 @@ class TrainingInfrastructureTest(unittest.TestCase):
             self.assertIn("encoder_state_dict", encoder_payload)
             self.assertEqual(encoder_payload["metadata"]["baseline"], "no_context")
             self.assertEqual(encoder_payload["metadata"]["data"]["source"], "cifar10")
+            checkpoint = torch.load(
+                out1 / "checkpoint_best.pt",
+                map_location="cpu",
+                weights_only=True,
+            )
+            self.assertIn("scheduler_state_dict", checkpoint)
 
     def test_real_data_failure_does_not_fallback_or_write_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

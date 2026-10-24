@@ -38,7 +38,7 @@ def metric_payload(baseline: str) -> dict:
         }[baseline],
     }
     return {
-        "metrics_schema_version": 2,
+        "metrics_schema_version": 3,
         "baseline": baseline,
         "seed": 42,
         "epochs": 5,
@@ -48,6 +48,7 @@ def metric_payload(baseline: str) -> dict:
             "embedding_dim": 64,
             "num_classes": 10,
             "lr": 1e-3,
+            "min_lr": 0.0,
             "weight_decay": 1e-4,
         },
         "runtime": {
@@ -66,6 +67,16 @@ def metric_payload(baseline: str) -> dict:
         "best_val_acc": 0.75,
         "selector_temperature": 0.1 if baseline in {"tacs", "two_stage"} else None,
         "policy_weight": 1.0 if baseline in {"tacs", "two_stage"} else None,
+        "training_recipe": {
+            "optimizer": "AdamW",
+            "scheduler": "CosineAnnealingLR",
+            "initial_lr": 1e-3,
+            "minimum_lr": 0.0,
+            "weight_decay": 1e-4,
+            "scheduler_t_max": 5,
+            "configured_epochs": 5,
+            "executed_epochs": 5,
+        },
         "data_setup_time_s": 1.0,
         "total_time_s": 20.0,
         "end_to_end_time_s": 21.0,
@@ -78,6 +89,8 @@ def metric_payload(baseline: str) -> dict:
         "history": [
             {
                 "val_acc": 0.75,
+                "learning_rate": 1e-3,
+                "next_learning_rate": 9e-4,
                 "throughput_qps": 100.0,
                 "val_throughput_qps": 120.0,
                 "val_latency_ms_per_query": 8.3333,

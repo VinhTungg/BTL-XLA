@@ -60,9 +60,9 @@ def validate_metric(
     require_complete: bool = True,
 ) -> None:
     context = f"metrics[{expected_baseline}]"
-    if payload.get("metrics_schema_version") != 2:
+    if payload.get("metrics_schema_version") != 3:
         raise BenchmarkValidationError(
-            f"{context} không dùng metrics schema v2; cần chạy lại bằng trainer hiện tại"
+            f"{context} không dùng metrics schema v3; cần chạy lại bằng trainer hiện tại"
         )
     if payload.get("baseline") != expected_baseline:
         raise BenchmarkValidationError(
@@ -92,6 +92,8 @@ def validate_metric(
         "val_acc",
         "val_latency_ms_per_query",
         "val_throughput_qps",
+        "learning_rate",
+        "next_learning_rate",
         "train_peak_rss_mb",
         "val_peak_rss_mb",
     }
@@ -111,6 +113,15 @@ def validate_metric(
     runtime = _require(payload, "runtime", context)
     if not runtime.get("device") or not runtime.get("torch_version"):
         raise BenchmarkValidationError(f"{context} thiếu thông tin runtime/device")
+
+    recipe = _require(payload, "training_recipe", context)
+    if (
+        recipe.get("optimizer") != "AdamW"
+        or recipe.get("scheduler") != "CosineAnnealingLR"
+    ):
+        raise BenchmarkValidationError(
+            f"{context} không dùng AdamW + CosineAnnealingLR"
+        )
 
     selection = _require(payload, "selection", context)
     candidate_pool_size = data.get("effective_sizes", {}).get("candidate_pool")
@@ -154,7 +165,11 @@ def validate_comparison(
         "embedding_dim": lambda item: item["config"]["embedding_dim"],
         "num_classes": lambda item: item["config"]["num_classes"],
         "lr": lambda item: item["config"]["lr"],
+        "min_lr": lambda item: item["config"]["min_lr"],
         "weight_decay": lambda item: item["config"]["weight_decay"],
+        "optimizer": lambda item: item["training_recipe"]["optimizer"],
+        "scheduler": lambda item: item["training_recipe"]["scheduler"],
+        "scheduler_t_max": lambda item: item["training_recipe"]["scheduler_t_max"],
         "device": lambda item: item["runtime"]["device"],
         "torch_version": lambda item: item["runtime"]["torch_version"],
         "torch_num_threads": lambda item: item["runtime"]["torch_num_threads"],
@@ -201,6 +216,8 @@ def summarize_metric(payload: dict[str, Any]) -> dict[str, Any]:
         "device": runtime["device"],
         "gpu_name": runtime["gpu_name"],
         "torch_version": runtime["torch_version"],
+        "optimizer": payload["training_recipe"]["optimizer"],
+        "scheduler": payload["training_recipe"]["scheduler"],
         "best_val_accuracy": payload["best_val_acc"],
         "test_accuracy": test_result.get("accuracy"),
         "avg_train_throughput_qps": _average(history, "throughput_qps"),

@@ -284,6 +284,7 @@ class TACSLoopTest(unittest.TestCase):
         self.assertFalse(config.pretrained_backbone)
         self.assertEqual(config.embedding_dim, 384)
         self.assertEqual(config.image_size, 256)
+        self.assertEqual(config.epochs, 100)
 
     def test_cli_parses_and_validates_tacs_objective_options(self) -> None:
         with patch.object(
@@ -297,12 +298,15 @@ class TACSLoopTest(unittest.TestCase):
                 "0.25",
                 "--policy-weight",
                 "0.5",
+                "--min-lr",
+                "0.00001",
             ],
         ):
             config = parse_args()
 
         self.assertEqual(config.selector_temperature, 0.25)
         self.assertEqual(config.policy_weight, 0.5)
+        self.assertEqual(config.min_lr, 1e-5)
 
         for option, value in (
             ("--selector-temperature", "0"),
