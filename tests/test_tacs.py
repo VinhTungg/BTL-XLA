@@ -2,7 +2,12 @@ import unittest
 
 import torch
 
-from tacs import DINOv3VisionEncoder, TACSLoss, TACSModel
+from tacs import (
+    DINOv3PatchTokenTaskNetwork,
+    DINOv3VisionEncoder,
+    TACSLoss,
+    TACSModel,
+)
 
 
 class TACSModelTest(unittest.TestCase):
@@ -26,6 +31,37 @@ class TACSModelTest(unittest.TestCase):
         self.assertTrue(gradients)
         self.assertGreater(sum(g.abs().sum().item() for g in gradients), 0.0)
 
+        task_gradients = [
+            parameter.grad
+            for parameter in self.model.task_network.parameters()
+            if parameter.grad is not None
+        ]
+        self.assertGreater(
+            sum(gradient.abs().sum().item() for gradient in task_gradients),
+            0.0,
+        )
+
+    def test_embedding_bank_proxy_backpropagates_task_loss_to_selector(self) -> None:
+        full_pool = torch.randn(11, 16)
+        selected_context = torch.randn_like(self.query)
+        output = self.model.forward_embedding_bank(
+            self.query,
+            full_pool,
+            selected_context=selected_context,
+        )
+
+        torch.nn.functional.cross_entropy(
+            output.context_logits,
+            self.targets,
+        ).backward()
+
+        selector_gradient = sum(
+            parameter.grad.abs().sum().item()
+            for parameter in self.model.selector.parameters()
+            if parameter.grad is not None
+        )
+        self.assertGreater(selector_gradient, 0.0)
+
     def test_eval_selection_is_deterministic(self) -> None:
         self.model.eval()
         first = self.model(self.query, self.candidates).selection_weights
@@ -36,14 +72,18 @@ class TACSModelTest(unittest.TestCase):
         self.model.eval()
         full_pool = torch.randn(11, 16)
 
-        output = self.model.forward_embedding_bank(self.query, full_pool)
+        output = self.model.forward_embedding_bank(
+            self.query,
+            full_pool,
+            selected_context=torch.randn_like(self.query),
+        )
 
         self.assertEqual(output.selector_scores.shape, (3, 11))
         self.assertEqual(output.selection_weights.shape, (3, 11))
         self.assertTrue(torch.equal(output.selection_weights.sum(dim=1), torch.ones(3)))
         self.assertEqual(output.selector_temperature, 0.1)
 
-    def test_detached_candidate_path_keeps_query_encoder_trainable(self) -> None:
+    def test_detached_selector_path_keeps_task_pixel_gradient(self) -> None:
         model = TACSModel(
             num_classes=4,
             embedding_dim=16,
@@ -53,13 +93,32 @@ class TACSModelTest(unittest.TestCase):
 
         TACSLoss()(model(self.query, candidates), self.targets).total.backward()
 
-        self.assertIsNone(candidates.grad)
+        self.assertIsNotNone(candidates.grad)
+        self.assertGreater(candidates.grad.abs().sum().item(), 0.0)
         encoder_grad = sum(
             parameter.grad.abs().sum().item()
             for parameter in model.selector.encoder.parameters()
             if parameter.grad is not None
         )
         self.assertGreater(encoder_grad, 0.0)
+
+    def test_task_network_concatenates_query_and_context_patches(self) -> None:
+        sequence_lengths: list[int] = []
+
+        def record_shape(_module, inputs) -> None:
+            sequence_lengths.append(inputs[0].shape[1])
+
+        handle = self.model.task_network.blocks.layers[0].register_forward_pre_hook(
+            record_shape
+        )
+        try:
+            self.model(self.query, self.candidates)
+        finally:
+            handle.remove()
+
+        # 24x24 with 4x4 patches: CLS + 36 query + 36 context, then
+        # the no-context reward branch: CLS + 36 query.
+        self.assertEqual(sequence_lengths, [73, 37])
 
     def test_dinov3_vits16_encoder_contract_without_downloading_weights(self) -> None:
         encoder = DINOv3VisionEncoder(pretrained=False).eval()
@@ -68,6 +127,19 @@ class TACSModelTest(unittest.TestCase):
 
         self.assertEqual(embeddings.shape, (1, 384))
         self.assertGreater(sum(p.numel() for p in encoder.parameters()), 21_000_000)
+
+    def test_dinov3_task_network_accepts_paired_patch_sequences(self) -> None:
+        task_network = DINOv3PatchTokenTaskNetwork(
+            num_classes=4,
+            pretrained=False,
+        ).eval()
+        with torch.no_grad():
+            logits = task_network(
+                torch.randn(1, 3, 256, 256),
+                torch.randn(1, 3, 256, 256),
+            )
+
+        self.assertEqual(logits.shape, (1, 4))
 
 
 if __name__ == "__main__":

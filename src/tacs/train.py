@@ -34,6 +34,7 @@ from .metrics import PeakMemoryMonitor
 from .model import (
     TACSModel,
     backbone_embedding_dim,
+    create_task_network,
     create_vision_encoder,
 )
 from .retrieval import (
@@ -531,6 +532,9 @@ def build_dataloaders(
             "selector_candidates": len(candidate_pool),
             "candidate_bank_refresh": "once_per_train_or_evaluation_epoch",
             "candidate_bank_gradient": False,
+            "downstream_input": "concatenated_query_context_patch_tokens",
+            "selected_context_loading": "hard_top1_image_only",
+            "gradient_estimator": "straight_through_embedding_proxy",
         }
     elif config.baseline == "two_stage":
         selection_info = {
@@ -541,6 +545,9 @@ def build_dataloaders(
             "candidate_batch_representation": "topk_indices_into_shared_embedding_bank",
             "candidate_bank_gradient": False,
             "retrieval_cache": "validated_standard_encoder_embedding_cache",
+            "downstream_input": "concatenated_query_context_patch_tokens",
+            "selected_context_loading": "hard_top1_image_only",
+            "gradient_estimator": "straight_through_embedding_proxy",
         }
 
     data_info = {
@@ -623,6 +630,33 @@ def _candidate_bank_for_loader(
     )
 
 
+def _selected_pool_positions(
+    batch: Any,
+    selection_weights: torch.Tensor,
+) -> torch.Tensor:
+    """Map a hard local Gumbel choice to positions in the shared pool."""
+
+    local_positions = selection_weights.detach().argmax(dim=-1)
+    if isinstance(batch, dict) and "candidate_positions" in batch:
+        topk_positions = batch["candidate_positions"].to(selection_weights.device)
+        return topk_positions.gather(1, local_positions.unsqueeze(1)).squeeze(1)
+    return local_positions
+
+
+def _load_selected_context(
+    candidate_dataset: Dataset,
+    pool_positions: torch.Tensor,
+    device: torch.device,
+) -> torch.Tensor:
+    """Load only the hard-selected images required by the Task Network."""
+
+    images = [
+        candidate_dataset[int(position)][0]
+        for position in pool_positions.detach().cpu().tolist()
+    ]
+    return torch.stack(images).to(device)
+
+
 def _train_one_epoch_impl(
     model: nn.Module,
     loader: DataLoader,
@@ -654,7 +688,22 @@ def _train_one_epoch_impl(
                 candidate_embeddings = candidate_bank[
                     batch["candidate_positions"].to(device)
                 ]
-            logits = model.forward_embedding_bank(query, candidate_embeddings)
+            selection = model.selector.forward_embedding_bank(
+                query,
+                candidate_embeddings,
+            )
+            pool_positions = _selected_pool_positions(batch, selection[1])
+            selected_context = _load_selected_context(
+                loader.dataset.candidate_dataset,
+                pool_positions,
+                device,
+            )
+            logits = model.forward_embedding_bank(
+                query,
+                candidate_embeddings,
+                selected_context=selected_context,
+                selection=selection,
+            )
         else:
             logits = model(query, candidates)
         loss_value = criterion(logits, target)
@@ -738,7 +787,22 @@ def _evaluate_impl(
                     candidate_embeddings = candidate_bank[
                         batch["candidate_positions"].to(device)
                     ]
-                logits = model.forward_embedding_bank(query, candidate_embeddings)
+                selection = model.selector.forward_embedding_bank(
+                    query,
+                    candidate_embeddings,
+                )
+                pool_positions = _selected_pool_positions(batch, selection[1])
+                selected_context = _load_selected_context(
+                    loader.dataset.candidate_dataset,
+                    pool_positions,
+                    device,
+                )
+                logits = model.forward_embedding_bank(
+                    query,
+                    candidate_embeddings,
+                    selected_context=selected_context,
+                    selection=selection,
+                )
             else:
                 logits = model(query, candidates)
             loss_value = criterion(logits, target)
@@ -821,12 +885,19 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     ).to(device)
 
     if config.baseline in {"tacs", "two_stage"}:
+        task_network = create_task_network(
+            config.backbone,
+            num_classes=config.num_classes,
+            embedding_dim=config.embedding_dim,
+            pretrained=config.pretrained_backbone,
+        ).to(device)
         model = TACSModel(
             num_classes=config.num_classes,
             embedding_dim=config.embedding_dim,
             temperature=config.selector_temperature,
             detach_candidate_embeddings=True,
             encoder=encoder,
+            task_network=task_network,
         ).to(device)
 
         def tacs_criterion(outputs, targets):

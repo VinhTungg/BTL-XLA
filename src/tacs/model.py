@@ -67,6 +67,147 @@ class DINOv3VisionEncoder(nn.Module):
         return embeddings
 
 
+class TinyPatchTokenTaskNetwork(nn.Module):
+    """Lightweight patch-token classifier used by CPU tests.
+
+    Query and context patches are placed in one token sequence before the
+    Transformer blocks, mirroring the classification architecture in Sec. 4.2
+    of the paper.  The context image is omitted entirely for the no-context
+    reward branch.
+    """
+
+    def __init__(
+        self,
+        num_classes: int,
+        embedding_dim: int = 64,
+        patch_size: int = 4,
+        depth: int = 2,
+        max_patches: int = 1024,
+    ) -> None:
+        super().__init__()
+        if embedding_dim <= 0:
+            raise ValueError("embedding_dim must be positive")
+        num_heads = 4 if embedding_dim % 4 == 0 else 1
+        self.output_dim = embedding_dim
+        self.patch_embed = nn.Conv2d(
+            3,
+            embedding_dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+        )
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embedding_dim))
+        self.position_embedding = nn.Parameter(
+            torch.zeros(1, max_patches + 1, embedding_dim)
+        )
+        self.query_type_embedding = nn.Parameter(torch.zeros(1, 1, embedding_dim))
+        self.context_type_embedding = nn.Parameter(torch.zeros(1, 1, embedding_dim))
+        layer = nn.TransformerEncoderLayer(
+            d_model=embedding_dim,
+            nhead=num_heads,
+            dim_feedforward=embedding_dim * 4,
+            dropout=0.0,
+            activation="gelu",
+            batch_first=True,
+            norm_first=False,
+        )
+        self.blocks = nn.TransformerEncoder(layer, num_layers=depth)
+        self.norm = nn.LayerNorm(embedding_dim)
+        self.head = nn.Linear(embedding_dim, num_classes)
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.position_embedding, std=0.02)
+        nn.init.trunc_normal_(self.query_type_embedding, std=0.02)
+        nn.init.trunc_normal_(self.context_type_embedding, std=0.02)
+
+    def _patch_tokens(self, images: Tensor) -> Tensor:
+        return self.patch_embed(images).flatten(2).transpose(1, 2)
+
+    def forward(
+        self,
+        query: Tensor,
+        context: Tensor | None = None,
+        context_proxy: Tensor | None = None,
+    ) -> Tensor:
+        query_tokens = self._patch_tokens(query)
+        patch_count = query_tokens.shape[1]
+        if patch_count > self.position_embedding.shape[1] - 1:
+            raise ValueError("image produces more patches than max_patches")
+        patch_positions = self.position_embedding[:, 1 : patch_count + 1]
+        query_tokens = query_tokens + patch_positions + self.query_type_embedding
+
+        token_parts = [
+            self.cls_token.expand(query.shape[0], -1, -1)
+            + self.position_embedding[:, :1],
+            query_tokens,
+        ]
+        if context is not None:
+            context_tokens = (
+                self._patch_tokens(context)
+                + patch_positions
+                + self.context_type_embedding
+            )
+            if context_proxy is not None:
+                if context_proxy.shape != (query.shape[0], self.output_dim):
+                    raise ValueError(
+                        "context_proxy must have shape [batch, embedding_dim]"
+                    )
+                context_tokens = context_tokens + context_proxy.unsqueeze(1)
+            token_parts.append(context_tokens)
+
+        tokens = torch.cat(token_parts, dim=1)
+        tokens = self.norm(self.blocks(tokens))
+        return self.head(tokens[:, 0])
+
+
+class DINOv3PatchTokenTaskNetwork(nn.Module):
+    """DINOv3 ViT-S/16 classifier that jointly attends query/context patches."""
+
+    output_dim = 384
+
+    def __init__(self, num_classes: int, pretrained: bool = True) -> None:
+        super().__init__()
+        self.backbone = DINOv3VisionEncoder(pretrained=pretrained).model
+        self.head = nn.Linear(self.output_dim, num_classes)
+
+    def _forward_tokens(
+        self,
+        query: Tensor,
+        context: Tensor | None,
+        context_proxy: Tensor | None,
+    ) -> Tensor:
+        model = self.backbone
+        query_patches = model.patch_embed(query)
+        query_tokens, rope = model._pos_embed(query_patches)
+
+        if context is not None:
+            context_tokens = model.patch_embed(context)
+            if context_tokens.ndim == 4:
+                context_tokens = context_tokens.flatten(1, 2)
+            if context_proxy is not None:
+                if context_proxy.shape != (query.shape[0], self.output_dim):
+                    raise ValueError(
+                        "context_proxy must have shape [batch, embedding_dim]"
+                    )
+                context_tokens = context_tokens + context_proxy.unsqueeze(1)
+            query_tokens = torch.cat((query_tokens, context_tokens), dim=1)
+            if rope is not None:
+                rope = torch.cat((rope, rope), dim=0)
+
+        tokens = model.norm_pre(query_tokens)
+        for block in model.blocks:
+            tokens = block(tokens, rope=rope)
+        return model.norm(tokens)
+
+    def forward(
+        self,
+        query: Tensor,
+        context: Tensor | None = None,
+        context_proxy: Tensor | None = None,
+    ) -> Tensor:
+        tokens = self._forward_tokens(query, context, context_proxy)
+        features = self.backbone.head_drop(self.backbone.fc_norm(tokens[:, 0]))
+        return self.head(features)
+
+
 def backbone_embedding_dim(backbone: str, tiny_embedding_dim: int = 64) -> int:
     if backbone == "tiny":
         return tiny_embedding_dim
@@ -90,6 +231,25 @@ def create_vision_encoder(
                 f"nhưng nhận {embedding_dim}."
             )
         return DINOv3VisionEncoder(pretrained=pretrained)
+    raise ValueError(f"Backbone không được hỗ trợ: {backbone}")
+
+
+def create_task_network(
+    backbone: str,
+    num_classes: int,
+    embedding_dim: int = 64,
+    pretrained: bool = True,
+) -> nn.Module:
+    if backbone == "tiny":
+        return TinyPatchTokenTaskNetwork(num_classes, embedding_dim)
+    if backbone == "dinov3_vits16":
+        expected_dim = backbone_embedding_dim(backbone)
+        if embedding_dim != expected_dim:
+            raise ValueError(
+                f"{backbone} yêu cầu embedding_dim={expected_dim}, "
+                f"nhưng nhận {embedding_dim}."
+            )
+        return DINOv3PatchTokenTaskNetwork(num_classes, pretrained=pretrained)
     raise ValueError(f"Backbone không được hỗ trợ: {backbone}")
 
 
@@ -175,7 +335,7 @@ class TACSOutput:
 
 
 class TACSModel(nn.Module):
-    """Classification MVP following the two-module structure in the paper."""
+    """Selector plus patch-token downstream network from the TACS paper."""
 
     def __init__(
         self,
@@ -184,6 +344,7 @@ class TACSModel(nn.Module):
         temperature: float = 0.1,
         detach_candidate_embeddings: bool = False,
         encoder: nn.Module | None = None,
+        task_network: nn.Module | None = None,
     ) -> None:
         super().__init__()
         selector_encoder = encoder if encoder is not None else TinyVisionEncoder(embedding_dim)
@@ -197,16 +358,17 @@ class TACSModel(nn.Module):
             temperature,
             detach_candidate_embeddings=detach_candidate_embeddings,
         )
-        self.classifier = nn.Sequential(
-            nn.Linear(embedding_dim * 2, embedding_dim),
-            nn.GELU(),
-            nn.Linear(embedding_dim, num_classes),
+        self.task_network = (
+            task_network
+            if task_network is not None
+            else TinyPatchTokenTaskNetwork(num_classes, embedding_dim)
         )
 
     def forward(self, query: Tensor, candidates: Tensor) -> TACSOutput:
-        scores, weights, query_embedding, selected_embedding = self.selector(query, candidates)
-        context_logits = self.classifier(torch.cat((query_embedding, selected_embedding), dim=-1))
-        no_context_logits = self.classifier(torch.cat((query_embedding, torch.zeros_like(query_embedding)), dim=-1))
+        scores, weights, _, _ = self.selector(query, candidates)
+        selected_context = torch.einsum("bn,bnchw->bchw", weights, candidates)
+        context_logits = self.task_network(query, selected_context)
+        no_context_logits = self.task_network(query)
         return TACSOutput(
             context_logits,
             no_context_logits,
@@ -219,16 +381,28 @@ class TACSModel(nn.Module):
         self,
         query: Tensor,
         candidate_embeddings: Tensor,
+        selected_context: Tensor | None = None,
+        selection: tuple[Tensor, Tensor, Tensor, Tensor] | None = None,
     ) -> TACSOutput:
-        scores, weights, query_embedding, selected_embedding = (
-            self.selector.forward_embedding_bank(query, candidate_embeddings)
+        scores, weights, _, selected_embedding = (
+            selection
+            if selection is not None
+            else self.selector.forward_embedding_bank(query, candidate_embeddings)
         )
-        context_logits = self.classifier(
-            torch.cat((query_embedding, selected_embedding), dim=-1)
+        if selected_context is None:
+            raise ValueError(
+                "selected_context is required when using an embedding bank"
+            )
+        # The hard candidate image is used in the forward pass.  The zero-value
+        # proxy preserves the straight-through task gradient to the bank-based
+        # Gumbel selection without materialising every pool image on the GPU.
+        context_proxy = selected_embedding - selected_embedding.detach()
+        context_logits = self.task_network(
+            query,
+            selected_context,
+            context_proxy=context_proxy,
         )
-        no_context_logits = self.classifier(
-            torch.cat((query_embedding, torch.zeros_like(query_embedding)), dim=-1)
-        )
+        no_context_logits = self.task_network(query)
         return TACSOutput(
             context_logits,
             no_context_logits,

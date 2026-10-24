@@ -10,10 +10,13 @@ from .data import (
 )
 from .losses import TACSLoss, TACSLossOutput
 from .model import (
+    DINOv3PatchTokenTaskNetwork,
     DINOv3VisionEncoder,
     TACSModel,
     TACSOutput,
+    TinyPatchTokenTaskNetwork,
     TinyVisionEncoder,
+    create_task_network,
     create_vision_encoder,
 )
 from .retrieval import (
@@ -36,7 +39,10 @@ __all__ = [
     "TACSModel",
     "TACSOutput",
     "TinyVisionEncoder",
+    "TinyPatchTokenTaskNetwork",
     "DINOv3VisionEncoder",
+    "DINOv3PatchTokenTaskNetwork",
+    "create_task_network",
     "create_vision_encoder",
     "TACSLoss",
     "TACSLossOutput",

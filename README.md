@@ -94,8 +94,16 @@ Lần chạy đầu cần Internet để tải weights và người dùng phải
 DINOv3 License. Thêm `--no-pretrained-backbone` chỉ để kiểm tra kỹ thuật;
 không dùng kết quả đó làm thí nghiệm báo cáo.
 
-Commit này thay backbone feature encoder. Ghép patch token query/context qua
-Task Network theo paper được triển khai ở nhiệm vụ tiếp theo.
+## Task Network ghép patch token
+
+Nhánh phân loại TACS bám theo Sec. 4.2 của paper: query và context được
+patch-embed riêng, sau đó nối thành một chuỗi token trước các Transformer
+block. Logit được sinh từ CLS token chung. Nhánh reward no-context chỉ
+chứa patch token của query, không dùng context rỗng giả.
+
+Profile `tiny` dùng Task Network Transformer nhỏ để unit test CPU. Profile
+`dinov3_vits16` dùng một ViT-S/16 DINOv3 cho Selector và một ViT-S/16
+DINOv3 riêng cho Downstream Task Network, đúng cấu trúc hai module của TACS.
 
 Mỗi `metrics.json` ghi rõ `data.source`, kích thước các tập và hash của
 file split để xác minh kết quả được tạo từ đúng dữ liệu.
@@ -116,7 +124,10 @@ hoặc không khớp checkpoint sẽ được tự động tái tạo.
 - `--baseline tacs` chấm điểm **toàn bộ candidate pool** cho mỗi query. Candidate
   được mã hóa thành một bank dùng chung, làm mới mỗi epoch, nên DataLoader không
   nhân bản 9.000 ảnh cho từng query. Bank được detach để giới hạn bộ nhớ; encoder
-  vẫn nhận gradient qua nhánh query.
+  vẫn nhận gradient qua nhánh query. Sau lựa chọn, trainer chỉ nạp ảnh
+  context thắng cuộc vào Task Network. Proxy straight-through có giá trị forward
+  bằng 0 giữ gradient từ task loss về utility score mà không cần đưa toàn
+  bộ pool ảnh 256×256 lên GPU.
 - `--baseline two_stage --topk-candidates 32` quét toàn pool bằng cosine từ
   standard encoder, sau đó chỉ đưa top-32 vào TACS selector. Dataset chỉ
   chuyển các vị trí top-k; trainer gom embedding từ một candidate bank dùng chung,

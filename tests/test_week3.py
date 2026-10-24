@@ -174,6 +174,18 @@ class TACSLoopTest(unittest.TestCase):
                                 result["selection"]["candidate_batch_representation"],
                                 "topk_indices_into_shared_embedding_bank",
                             )
+                        self.assertEqual(
+                            result["selection"]["downstream_input"],
+                            "concatenated_query_context_patch_tokens",
+                        )
+                        self.assertEqual(
+                            result["selection"]["selected_context_loading"],
+                            "hard_top1_image_only",
+                        )
+                        self.assertEqual(
+                            result["selection"]["gradient_estimator"],
+                            "straight_through_embedding_proxy",
+                        )
 
             rebuilt_cache = torch.load(cache_path, map_location="cpu", weights_only=True)
             self.assertEqual(rebuilt_cache["num_candidates"], 8)
