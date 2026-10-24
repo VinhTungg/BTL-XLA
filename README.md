@@ -162,7 +162,7 @@ throughput validation để việc so sánh không nhầm giữa Full và top-k.
 
 ## Benchmark 5 mô hình
 
-Trainer ghi metrics schema v2 với peak RSS, peak CUDA allocated/reserved, thời
+Trainer ghi metrics schema v5 với peak RSS, peak CUDA allocated/reserved, thời
 gian setup, latency end-to-end và cấu hình thí nghiệm. Sau khi train đủ năm mô
 hình với `--eval-test`, chạy:
 
@@ -181,6 +181,43 @@ test result hoặc schema cũ sẽ bị từ chối. Kết quả gồm:
 
 Chỉ để kiểm tra pipeline bằng dry-run, có thể thêm `--allow-incomplete`; dữ liệu
 này không được dùng làm kết quả báo cáo.
+
+## Chạy thí nghiệm 3 seed
+
+Runner nhiều seed mặc định chạy đủ năm mô hình trên CIFAR-100 với DINOv3
+ViT-S/16, 100 epochs và các seed `42 43 44`. Mỗi lần chạy nằm trong một process
+riêng để giải phóng VRAM trước mô hình kế tiếp. `no_context` luôn được chạy trước
+`similarity` và `two_stage` để tạo standard encoder đúng seed.
+
+Kiểm tra trước toàn bộ lệnh và đường dẫn mà không train:
+
+```powershell
+python -m tacs.multiseed --plan-only
+```
+
+Smoke test nhanh pipeline nhiều seed bằng cấu hình nhỏ:
+
+```powershell
+python -m tacs.multiseed --dataset cifar10 --backbone tiny --dry-run --device cpu
+```
+
+Chạy thí nghiệm chính thức:
+
+```powershell
+python -m tacs.multiseed --device cuda --num-workers 4
+```
+
+Kết quả mỗi seed được lưu tại
+`outputs/cifar100/dinov3_vits16/seed_<seed>/<baseline>/`. Runner tự bỏ qua run
+đã hoàn chỉnh và tiếp tục từ run còn thiếu; thêm `--force` khi thật sự muốn chạy
+lại. Cả ba seed dùng chung split mặc định `data/splits/cifar100_seed42.json`, do
+đó độ lệch chuẩn phản ánh biến thiên huấn luyện thay vì thay đổi tập dữ liệu.
+
+Sau khi hoàn tất, mean và sample standard deviation (`ddof=1`) được xuất ra:
+
+- `outputs/cifar100/dinov3_vits16/multiseed_summary.json`
+- `outputs/cifar100/dinov3_vits16/multiseed_summary.csv`
+- `outputs/cifar100/dinov3_vits16/multiseed_summary.md`
 
 ## Chạy smoke training
 

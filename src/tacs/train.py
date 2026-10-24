@@ -47,6 +47,7 @@ from .retrieval import (
 
 ENCODER_CHECKPOINT_SCHEMA_VERSION = 1
 EMBEDDING_CACHE_SCHEMA_VERSION = 1
+METRICS_SCHEMA_VERSION = 5
 
 
 @dataclass
@@ -1110,7 +1111,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     }
 
     metrics_payload = {
-        "metrics_schema_version": 5,
+        "metrics_schema_version": METRICS_SCHEMA_VERSION,
         "baseline": config.baseline,
         "seed": config.seed,
         "epochs": epochs,
@@ -1202,12 +1203,24 @@ def parse_args() -> ExperimentConfig:
         default=0.0,
         help="Learning rate tối thiểu của cosine annealing",
     )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=1e-4,
+        help="Weight decay của AdamW",
+    )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     parser.add_argument("--data-root", type=str, default="data", help="Thư mục dữ liệu CIFAR")
     parser.add_argument("--split-file", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default=None, help="Thư mục xuất kết quả")
     parser.add_argument("--standard-encoder", type=str, default=None)
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help="Số worker của mỗi DataLoader",
+    )
     parser.add_argument(
         "--topk-candidates",
         type=int,
@@ -1240,6 +1253,10 @@ def parse_args() -> ExperimentConfig:
         parser.error("--lr phải lớn hơn 0")
     if args.min_lr < 0 or args.min_lr >= args.lr:
         parser.error("--min-lr phải thỏa 0 <= min-lr < lr")
+    if args.weight_decay < 0:
+        parser.error("--weight-decay không được âm")
+    if args.num_workers < 0:
+        parser.error("--num-workers không được âm")
     if args.topk_candidates <= 0:
         parser.error("--topk-candidates phải lớn hơn 0")
 
@@ -1257,12 +1274,14 @@ def parse_args() -> ExperimentConfig:
         batch_size=args.batch_size,
         lr=args.lr,
         min_lr=args.min_lr,
+        weight_decay=args.weight_decay,
         seed=args.seed,
         device=args.device,
         data_root=args.data_root,
         split_file=args.split_file,
         output_dir=args.output_dir,
         standard_encoder_path=args.standard_encoder,
+        num_workers=args.num_workers,
         topk_candidates=args.topk_candidates,
         selector_temperature=args.selector_temperature,
         policy_weight=args.policy_weight,
