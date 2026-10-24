@@ -49,6 +49,7 @@ def write_complete_run(
             "dry_run": config.dry_run,
             "num_workers": config.num_workers,
             "eval_test": config.eval_test,
+            "amp": config.amp,
         },
         "training_recipe": {"executed_epochs": config.executed_epochs},
         "best_val_acc": val_accuracy,
@@ -80,6 +81,8 @@ class MultiSeedRunnerTest(unittest.TestCase):
         self.assertEqual(config.seeds, (42, 43, 44))
         self.assertEqual(config.baselines, BASELINES)
         self.assertTrue(config.eval_test)
+        self.assertTrue(config.amp)
+        self.assertTrue(config.resume)
         self.assertEqual(config.configured_epochs, 100)
 
     def test_command_uses_isolated_seed_paths_and_standard_encoder(self) -> None:
@@ -105,6 +108,11 @@ class MultiSeedRunnerTest(unittest.TestCase):
             ordered_baselines(("two_stage", "no_context")).index("no_context"),
             ordered_baselines(("two_stage", "no_context")).index("two_stage"),
         )
+
+        restart_command = build_train_command(
+            RunnerConfig(force=True), 42, "no_context"
+        )
+        self.assertIn("--no-resume", restart_command)
 
     def test_complete_run_requires_matching_config_test_and_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

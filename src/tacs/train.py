@@ -12,6 +12,7 @@ import argparse
 import hashlib
 import json
 import time
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,8 @@ class ExperimentConfig:
     dry_run: bool = False
     num_workers: int = 0
     eval_test: bool = False
+    amp: bool = True
+    resume: bool = True
     max_train_samples: int | None = None
     max_val_samples: int | None = None
 
@@ -151,6 +154,13 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _atomic_torch_save(payload: Any, path: Path) -> None:
+    """Write a checkpoint atomically so interruption keeps the previous file."""
+    temporary_path = path.with_name(f"{path.name}.tmp")
+    torch.save(payload, temporary_path)
+    temporary_path.replace(path)
 
 
 def _candidate_indices_sha256(candidate_dataset: Dataset) -> str:
@@ -491,11 +501,13 @@ def build_dataloaders(
         raise ValueError(f"Unknown baseline: {config.baseline}")
 
     bs = config.batch_size if not config.dry_run else 4
+    pin_memory = device.type == "cuda"
     train_loader = DataLoader(
         train_ds,
         batch_size=bs,
         shuffle=True,
         num_workers=config.num_workers,
+        pin_memory=pin_memory,
         drop_last=False,
     )
     val_loader = DataLoader(
@@ -503,6 +515,7 @@ def build_dataloaders(
         batch_size=bs,
         shuffle=False,
         num_workers=config.num_workers,
+        pin_memory=pin_memory,
         drop_last=False,
     )
     test_loader = (
@@ -511,6 +524,7 @@ def build_dataloaders(
             batch_size=bs,
             shuffle=False,
             num_workers=config.num_workers,
+            pin_memory=pin_memory,
             drop_last=False,
         )
         if test_ds is not None
@@ -607,6 +621,7 @@ def _encode_full_candidate_bank(
     candidate_dataset: Dataset,
     device: torch.device,
     batch_size: int,
+    amp_enabled: bool = False,
 ) -> torch.Tensor:
     """Encode the complete pool once without duplicating images per query.
 
@@ -621,11 +636,14 @@ def _encode_full_candidate_bank(
         batch_size=batch_size,
         shuffle=False,
         num_workers=0,
+        pin_memory=device.type == "cuda",
     )
     embeddings: list[torch.Tensor] = []
     with torch.no_grad():
         for images, _ in candidate_loader:
-            embeddings.append(encoder(images.to(device)).detach())
+            images = images.to(device, non_blocking=True)
+            with _autocast_context(device, amp_enabled):
+                embeddings.append(encoder(images).detach())
     encoder.train(was_training)
     return torch.cat(embeddings, dim=0)
 
@@ -634,6 +652,7 @@ def _candidate_bank_for_loader(
     model: nn.Module,
     loader: DataLoader,
     device: torch.device,
+    amp_enabled: bool = False,
 ) -> torch.Tensor | None:
     if not isinstance(loader.dataset, (FullPoolContextDataset, TopKContextDataset)):
         return None
@@ -644,7 +663,14 @@ def _candidate_bank_for_loader(
         loader.dataset.candidate_dataset,
         device,
         batch_size=loader.batch_size or 1,
+        amp_enabled=amp_enabled,
     )
+
+
+def _autocast_context(device: torch.device, enabled: bool):
+    if not enabled:
+        return nullcontext()
+    return torch.autocast(device_type=device.type, dtype=torch.float16)
 
 
 def _selected_pool_positions(
@@ -671,7 +697,7 @@ def _load_selected_context(
         candidate_dataset[int(position)][0]
         for position in pool_positions.detach().cpu().tolist()
     ]
-    return torch.stack(images).to(device)
+    return torch.stack(images).to(device, non_blocking=True)
 
 
 def _train_one_epoch_impl(
@@ -680,11 +706,15 @@ def _train_one_epoch_impl(
     optimizer: torch.optim.Optimizer,
     criterion: Any,
     device: torch.device,
+    scaler: torch.amp.GradScaler | None = None,
+    amp_enabled: bool = False,
 ) -> dict[str, float]:
     """Huấn luyện 1 epoch."""
     model.train()
     selection_started_at = time.perf_counter()
-    candidate_bank = _candidate_bank_for_loader(model, loader, device)
+    candidate_bank = _candidate_bank_for_loader(
+        model, loader, device, amp_enabled=amp_enabled
+    )
     runtime_selection_time = time.perf_counter() - selection_started_at
     loop_started_at = time.perf_counter()
     total_loss = 0.0
@@ -693,40 +723,46 @@ def _train_one_epoch_impl(
 
     for batch in loader:
         query, target, candidates = unpack_batch(batch)
-        query = query.to(device)
-        target = target.to(device)
+        query = query.to(device, non_blocking=True)
+        target = target.to(device, non_blocking=True)
         if candidates is not None:
-            candidates = candidates.to(device)
+            candidates = candidates.to(device, non_blocking=True)
 
-        optimizer.zero_grad()
-        if candidate_bank is not None:
-            candidate_embeddings = candidate_bank
-            if isinstance(batch, dict) and "candidate_positions" in batch:
-                candidate_embeddings = candidate_bank[
-                    batch["candidate_positions"].to(device)
-                ]
-            selection = model.selector.forward_embedding_bank(
-                query,
-                candidate_embeddings,
-            )
-            pool_positions = _selected_pool_positions(batch, selection[1])
-            selected_context = _load_selected_context(
-                loader.dataset.candidate_dataset,
-                pool_positions,
-                device,
-            )
-            logits = model.forward_embedding_bank(
-                query,
-                candidate_embeddings,
-                selected_context=selected_context,
-                selection=selection,
-            )
+        optimizer.zero_grad(set_to_none=True)
+        with _autocast_context(device, amp_enabled):
+            if candidate_bank is not None:
+                candidate_embeddings = candidate_bank
+                if isinstance(batch, dict) and "candidate_positions" in batch:
+                    candidate_embeddings = candidate_bank[
+                        batch["candidate_positions"].to(device, non_blocking=True)
+                    ]
+                selection = model.selector.forward_embedding_bank(
+                    query,
+                    candidate_embeddings,
+                )
+                pool_positions = _selected_pool_positions(batch, selection[1])
+                selected_context = _load_selected_context(
+                    loader.dataset.candidate_dataset,
+                    pool_positions,
+                    device,
+                )
+                logits = model.forward_embedding_bank(
+                    query,
+                    candidate_embeddings,
+                    selected_context=selected_context,
+                    selection=selection,
+                )
+            else:
+                logits = model(query, candidates)
+            loss_value = criterion(logits, target)
+            loss = loss_value.total if hasattr(loss_value, "total") else loss_value
+        if scaler is not None and scaler.is_enabled():
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
         else:
-            logits = model(query, candidates)
-        loss_value = criterion(logits, target)
-        loss = loss_value.total if hasattr(loss_value, "total") else loss_value
-        loss.backward()
-        optimizer.step()
+            loss.backward()
+            optimizer.step()
 
         total_loss += loss.item() * query.size(0)
         pred_logits = logits.context_logits if hasattr(logits, "context_logits") else logits
@@ -767,10 +803,20 @@ def train_one_epoch(
     optimizer: torch.optim.Optimizer,
     criterion: Any,
     device: torch.device,
+    scaler: torch.amp.GradScaler | None = None,
+    amp_enabled: bool = False,
 ) -> dict[str, float | None]:
     """Train one epoch and include peak process/CUDA memory."""
     with PeakMemoryMonitor(device) as memory_monitor:
-        result = _train_one_epoch_impl(model, loader, optimizer, criterion, device)
+        result = _train_one_epoch_impl(
+            model,
+            loader,
+            optimizer,
+            criterion,
+            device,
+            scaler=scaler,
+            amp_enabled=amp_enabled,
+        )
     return {**result, **memory_monitor.result().as_dict()}
 
 
@@ -779,11 +825,14 @@ def _evaluate_impl(
     loader: DataLoader,
     criterion: Any,
     device: torch.device,
+    amp_enabled: bool = False,
 ) -> dict[str, float]:
     """Đánh giá mô hình (không cập nhật gradient)."""
     model.eval()
     selection_started_at = time.perf_counter()
-    candidate_bank = _candidate_bank_for_loader(model, loader, device)
+    candidate_bank = _candidate_bank_for_loader(
+        model, loader, device, amp_enabled=amp_enabled
+    )
     runtime_selection_time = time.perf_counter() - selection_started_at
     loop_started_at = time.perf_counter()
     total_loss = 0.0
@@ -793,37 +842,40 @@ def _evaluate_impl(
     with torch.no_grad():
         for batch in loader:
             query, target, candidates = unpack_batch(batch)
-            query = query.to(device)
-            target = target.to(device)
+            query = query.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
             if candidates is not None:
-                candidates = candidates.to(device)
+                candidates = candidates.to(device, non_blocking=True)
 
-            if candidate_bank is not None:
-                candidate_embeddings = candidate_bank
-                if isinstance(batch, dict) and "candidate_positions" in batch:
-                    candidate_embeddings = candidate_bank[
-                        batch["candidate_positions"].to(device)
-                    ]
-                selection = model.selector.forward_embedding_bank(
-                    query,
-                    candidate_embeddings,
-                )
-                pool_positions = _selected_pool_positions(batch, selection[1])
-                selected_context = _load_selected_context(
-                    loader.dataset.candidate_dataset,
-                    pool_positions,
-                    device,
-                )
-                logits = model.forward_embedding_bank(
-                    query,
-                    candidate_embeddings,
-                    selected_context=selected_context,
-                    selection=selection,
-                )
-            else:
-                logits = model(query, candidates)
-            loss_value = criterion(logits, target)
-            loss = loss_value.total if hasattr(loss_value, "total") else loss_value
+            with _autocast_context(device, amp_enabled):
+                if candidate_bank is not None:
+                    candidate_embeddings = candidate_bank
+                    if isinstance(batch, dict) and "candidate_positions" in batch:
+                        candidate_embeddings = candidate_bank[
+                            batch["candidate_positions"].to(
+                                device, non_blocking=True
+                            )
+                        ]
+                    selection = model.selector.forward_embedding_bank(
+                        query,
+                        candidate_embeddings,
+                    )
+                    pool_positions = _selected_pool_positions(batch, selection[1])
+                    selected_context = _load_selected_context(
+                        loader.dataset.candidate_dataset,
+                        pool_positions,
+                        device,
+                    )
+                    logits = model.forward_embedding_bank(
+                        query,
+                        candidate_embeddings,
+                        selected_context=selected_context,
+                        selection=selection,
+                    )
+                else:
+                    logits = model(query, candidates)
+                loss_value = criterion(logits, target)
+                loss = loss_value.total if hasattr(loss_value, "total") else loss_value
 
             total_loss += loss.item() * query.size(0)
             pred_logits = logits.context_logits if hasattr(logits, "context_logits") else logits
@@ -863,10 +915,13 @@ def evaluate(
     loader: DataLoader,
     criterion: Any,
     device: torch.device,
+    amp_enabled: bool = False,
 ) -> dict[str, float | None]:
     """Evaluate one split and include peak process/CUDA memory."""
     with PeakMemoryMonitor(device) as memory_monitor:
-        result = _evaluate_impl(model, loader, criterion, device)
+        result = _evaluate_impl(
+            model, loader, criterion, device, amp_enabled=amp_enabled
+        )
     return {**result, **memory_monitor.result().as_dict()}
 
 
@@ -889,11 +944,102 @@ def build_optimizer_and_scheduler(
     return optimizer, scheduler
 
 
+RESUME_CONFIG_KEYS = (
+    "baseline",
+    "dataset",
+    "backbone",
+    "seed",
+    "embedding_dim",
+    "image_size",
+    "num_classes",
+    "lr",
+    "min_lr",
+    "weight_decay",
+    "topk_candidates",
+    "selector_temperature",
+    "policy_weight",
+)
+
+
+def _restore_training_checkpoint(
+    checkpoint_path: Path,
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    scaler: torch.amp.GradScaler,
+    config: ExperimentConfig,
+    device: torch.device,
+) -> tuple[int, float, list[dict[str, Any]], float]:
+    """Restore an interrupted run from its best compatible checkpoint."""
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location="cpu",
+        weights_only=True,
+    )
+    if not isinstance(checkpoint, dict):
+        raise RuntimeError(f"Checkpoint resume không hợp lệ: {checkpoint_path}")
+    checkpoint_config = checkpoint.get("config")
+    if not isinstance(checkpoint_config, dict):
+        raise RuntimeError(
+            f"Checkpoint resume thiếu config: {checkpoint_path}. "
+            "Dùng --no-resume để train lại từ đầu."
+        )
+    current_config = asdict(config)
+    mismatches = [
+        key
+        for key in RESUME_CONFIG_KEYS
+        if checkpoint_config.get(key) != current_config.get(key)
+    ]
+    if mismatches:
+        raise RuntimeError(
+            "Checkpoint không khớp cấu hình hiện tại tại: "
+            f"{', '.join(mismatches)}. Dùng --no-resume hoặc output directory khác."
+        )
+
+    required = {
+        "epoch",
+        "model_state_dict",
+        "optimizer_state_dict",
+        "scheduler_state_dict",
+        "val_accuracy",
+    }
+    missing = required.difference(checkpoint)
+    if missing:
+        raise RuntimeError(
+            f"Checkpoint resume thiếu trường bắt buộc: {sorted(missing)}"
+        )
+    model.load_state_dict(checkpoint["model_state_dict"])
+    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+    scaler_state = checkpoint.get("scaler_state_dict")
+    if scaler.is_enabled() and isinstance(scaler_state, dict):
+        scaler.load_state_dict(scaler_state)
+    rng_state = checkpoint.get("torch_rng_state")
+    if isinstance(rng_state, torch.Tensor):
+        torch.set_rng_state(rng_state.cpu())
+    cuda_rng_states = checkpoint.get("cuda_rng_state_all")
+    if device.type == "cuda" and isinstance(cuda_rng_states, list):
+        torch.cuda.set_rng_state_all(cuda_rng_states)
+
+    history = checkpoint.get("history", [])
+    if not isinstance(history, list):
+        history = []
+    epoch = int(checkpoint["epoch"])
+    best_val_acc = float(
+        checkpoint.get("best_val_accuracy", checkpoint["val_accuracy"])
+    )
+    elapsed_time = float(checkpoint.get("elapsed_training_time_s", 0.0))
+    return epoch + 1, best_val_acc, history, elapsed_time
+
+
 def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     """Chạy toàn bộ quy trình huấn luyện và đánh giá cho 1 baseline."""
     configure_stdout()
     torch.manual_seed(config.seed)
     device = resolve_device(config.device)
+    amp_enabled = bool(config.amp and device.type == "cuda")
+    if device.type == "cuda":
+        torch.set_float32_matmul_precision("high")
 
     data_setup_started_at = time.perf_counter()
     with PeakMemoryMonitor(device) as data_setup_memory_monitor:
@@ -952,22 +1098,70 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         criterion = nn.CrossEntropyLoss()
 
     optimizer, scheduler = build_optimizer_and_scheduler(model, config)
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
 
     best_val_acc = -1.0
     history: list[dict[str, Any]] = []
-    total_train_start = time.perf_counter()
-
     epochs = config.epochs if not config.dry_run else 1
-    print(f"\n[{config.baseline.upper()}] Starting training {epochs} epochs on device '{device}'...")
+    start_epoch = 1
+    resumed_from_epoch: int | None = None
+    previous_training_time = 0.0
+    best_checkpoint_path = out_dir / "checkpoint_best.pt"
+    latest_checkpoint_path = out_dir / "checkpoint_latest.pt"
+    resume_checkpoint_path = (
+        latest_checkpoint_path
+        if latest_checkpoint_path.is_file()
+        else best_checkpoint_path
+    )
+    if config.resume and resume_checkpoint_path.is_file():
+        (
+            start_epoch,
+            best_val_acc,
+            history,
+            previous_training_time,
+        ) = _restore_training_checkpoint(
+            resume_checkpoint_path,
+            model,
+            optimizer,
+            scheduler,
+            scaler,
+            config,
+            device,
+        )
+        resumed_from_epoch = start_epoch - 1
 
+    total_train_start = time.perf_counter()
+    precision_label = "AMP FP16" if amp_enabled else "FP32"
+    if resumed_from_epoch is None:
+        progress_label = f"starting at epoch 1/{epochs}"
+    else:
+        progress_label = f"resuming after epoch {resumed_from_epoch}/{epochs}"
+    print(
+        f"\n[{config.baseline.upper()}] {progress_label} on device '{device}' "
+        f"with {precision_label}..."
+    )
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         if hasattr(train_loader.dataset, "set_epoch"):
             train_loader.dataset.set_epoch(epoch)
 
         learning_rate = float(optimizer.param_groups[0]["lr"])
-        train_res = train_one_epoch(model, train_loader, optimizer, criterion, device)
-        val_res = evaluate(model, val_loader, criterion, device)
+        train_res = train_one_epoch(
+            model,
+            train_loader,
+            optimizer,
+            criterion,
+            device,
+            scaler=scaler,
+            amp_enabled=amp_enabled,
+        )
+        val_res = evaluate(
+            model,
+            val_loader,
+            criterion,
+            device,
+            amp_enabled=amp_enabled,
+        )
         scheduler.step()
         next_learning_rate = float(optimizer.param_groups[0]["lr"])
         rss_mb = max(train_res["peak_rss_mb"], val_res["peak_rss_mb"])
@@ -1021,20 +1215,18 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         # Lưu checkpoint tốt nhất
         if val_res["accuracy"] > best_val_acc:
             best_val_acc = val_res["accuracy"]
-            checkpoint_data = {
+            best_checkpoint_data = {
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "scheduler_state_dict": scheduler.state_dict(),
                 "val_accuracy": best_val_acc,
                 "val_loss": val_res["loss"],
                 "config": asdict(config),
             }
-            torch.save(checkpoint_data, out_dir / "checkpoint_best.pt")
+            _atomic_torch_save(best_checkpoint_data, best_checkpoint_path)
 
             # Lưu encoder chuẩn (đặc biệt quan trọng ở No-context cho Gói 2)
             encoder = model.selector.encoder if isinstance(model, TACSModel) else model.encoder
-            torch.save(
+            _atomic_torch_save(
                 {
                     "encoder_state_dict": encoder.state_dict(),
                     "metadata": {
@@ -1049,15 +1241,46 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
                 out_dir / "best_encoder.pt",
             )
 
-    training_time = time.perf_counter() - total_train_start
+        latest_checkpoint_data = {
+            "epoch": epoch,
+            "model_state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": scheduler.state_dict(),
+            "val_accuracy": val_res["accuracy"],
+            "best_val_accuracy": best_val_acc,
+            "val_loss": val_res["loss"],
+            "config": asdict(config),
+            "history": history,
+            "elapsed_training_time_s": (
+                previous_training_time + time.perf_counter() - total_train_start
+            ),
+            "scaler_state_dict": scaler.state_dict(),
+            "torch_rng_state": torch.get_rng_state(),
+            "cuda_rng_state_all": (
+                torch.cuda.get_rng_state_all() if device.type == "cuda" else None
+            ),
+        }
+        _atomic_torch_save(latest_checkpoint_data, latest_checkpoint_path)
+
+    training_time = previous_training_time + time.perf_counter() - total_train_start
     total_time = round(training_time, 2)
 
     # Đánh giá test set (nếu yêu cầu)
     test_result = None
     if test_loader is not None:
-        best_ckpt = torch.load(out_dir / "checkpoint_best.pt", map_location=device, weights_only=True)
+        best_ckpt = torch.load(
+            best_checkpoint_path,
+            map_location="cpu",
+            weights_only=True,
+        )
         model.load_state_dict(best_ckpt["model_state_dict"])
-        test_result = evaluate(model, test_loader, criterion, device)
+        test_result = evaluate(
+            model,
+            test_loader,
+            criterion,
+            device,
+            amp_enabled=amp_enabled,
+        )
         print(f"  --> [TEST EVALUATION] Loss: {test_result['loss']:.4f}, Acc: {test_result['accuracy'] * 100:.2f}%")
 
     phase_peak_rss = [data_setup_memory["peak_rss_mb"]]
@@ -1100,11 +1323,13 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             max(non_null_vram_reserved) if non_null_vram_reserved else None
         ),
     }
-    run_time = time.perf_counter() - data_setup_started_at
+    run_time = previous_training_time + time.perf_counter() - data_setup_started_at
     runtime_info = {
         "device": str(device),
         "torch_version": torch.__version__,
         "torch_num_threads": torch.get_num_threads(),
+        "precision": "amp_fp16" if amp_enabled else "fp32",
+        "resumed_from_epoch": resumed_from_epoch,
         "gpu_name": (
             torch.cuda.get_device_name(device) if device.type == "cuda" else None
         ),
@@ -1138,6 +1363,9 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             "scheduler_t_max": config.epochs,
             "configured_epochs": config.epochs,
             "executed_epochs": epochs,
+            "amp_enabled": amp_enabled,
+            "resume_enabled": config.resume,
+            "resumed_from_epoch": resumed_from_epoch,
         },
         "model_architecture": {
             "downstream_task_network": "patch_token_transformer",
@@ -1188,6 +1416,16 @@ def parse_args() -> ExperimentConfig:
         "--no-pretrained-backbone",
         action="store_true",
         help="Không tải pretrained weights (chỉ dùng cho kiểm tra kỹ thuật)",
+    )
+    parser.add_argument(
+        "--no-amp",
+        action="store_true",
+        help="Tắt CUDA automatic mixed precision",
+    )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Bỏ qua checkpoint hiện có và train lại từ epoch đầu",
     )
     parser.add_argument(
         "--epochs",
@@ -1270,6 +1508,8 @@ def parse_args() -> ExperimentConfig:
         dataset=args.dataset,
         backbone=args.backbone,
         pretrained_backbone=not args.no_pretrained_backbone,
+        amp=not args.no_amp,
+        resume=not args.no_resume,
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,

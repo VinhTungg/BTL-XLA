@@ -52,6 +52,8 @@ class RunnerConfig:
     eval_test: bool = True
     dry_run: bool = False
     pretrained_backbone: bool = True
+    amp: bool = True
+    resume: bool = True
     force: bool = False
     plan_only: bool = False
 
@@ -141,6 +143,10 @@ def build_train_command(config: RunnerConfig, seed: int, baseline: str) -> list[
         command.append("--dry-run")
     if not config.pretrained_backbone:
         command.append("--no-pretrained-backbone")
+    if not config.amp:
+        command.append("--no-amp")
+    if not config.resume or config.force:
+        command.append("--no-resume")
     return command
 
 
@@ -179,6 +185,7 @@ def is_complete_run(
         "dry_run": config.dry_run,
         "num_workers": config.num_workers,
         "eval_test": config.eval_test,
+        "amp": config.amp,
     }
     required_matches = (
         payload.get("metrics_schema_version") == METRICS_SCHEMA_VERSION,
@@ -416,6 +423,12 @@ def parse_args(argv: Sequence[str] | None = None) -> RunnerConfig:
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--no-pretrained-backbone", action="store_true")
+    parser.add_argument("--no-amp", action="store_true", help="Tắt CUDA AMP")
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="Không tiếp tục checkpoint của run đang dở",
+    )
     parser.add_argument("--force", action="store_true", help="Chạy lại cả run hoàn chỉnh")
     parser.add_argument("--plan-only", action="store_true", help="Chỉ in lệnh sẽ chạy")
     args = parser.parse_args(argv)
@@ -460,6 +473,8 @@ def parse_args(argv: Sequence[str] | None = None) -> RunnerConfig:
         eval_test=not args.no_eval_test,
         dry_run=args.dry_run,
         pretrained_backbone=not args.no_pretrained_backbone,
+        amp=not args.no_amp,
+        resume=not args.no_resume,
         force=args.force,
         plan_only=args.plan_only,
     )

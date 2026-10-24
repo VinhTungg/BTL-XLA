@@ -101,6 +101,17 @@ sánh công bằng. Profile DINOv3 mặc định 100 epochs theo paper; profile
 `next_learning_rate` trong `metrics.json`; checkpoint lưu cả optimizer và
 scheduler state.
 
+Trên CUDA, trainer mặc định dùng automatic mixed precision FP16 để giảm VRAM
+và tăng throughput nhưng không thay đổi dataset hay kiến trúc. Có thể tắt bằng
+`--no-amp` để debug số học FP32. DataLoader tự bật pinned memory và tensor được
+chuyển lên GPU theo chế độ non-blocking.
+
+Sau mỗi epoch, `checkpoint_latest.pt` lưu model, optimizer, scheduler, AMP
+scaler, lịch sử và RNG state. Khi chạy lại cùng lệnh, trainer tự tiếp tục từ
+checkpoint này; với run cũ chưa có checkpoint latest, trainer dùng
+`checkpoint_best.pt` tương thích làm fallback. Dùng `--no-resume` để chủ động
+train lại từ đầu.
+
 ## Task Network ghép patch token
 
 Nhánh phân loại TACS bám theo Sec. 4.2 của paper: query và context được
@@ -210,8 +221,16 @@ python -m tacs.multiseed --device cuda --num-workers 4
 Kết quả mỗi seed được lưu tại
 `outputs/cifar100/dinov3_vits16/seed_<seed>/<baseline>/`. Runner tự bỏ qua run
 đã hoàn chỉnh và tiếp tục từ run còn thiếu; thêm `--force` khi thật sự muốn chạy
-lại. Cả ba seed dùng chung split mặc định `data/splits/cifar100_seed42.json`, do
+lại từ đầu. Một run đang dở được tiếp tục từ checkpoint gần nhất; `--force`
+đồng thời tắt resume. Cả ba seed dùng chung split mặc định
+`data/splits/cifar100_seed42.json`, do
 đó độ lệch chuẩn phản ánh biến thiên huấn luyện thay vì thay đổi tập dữ liệu.
+
+Ví dụ phù hợp GPU laptop 4 GB, đồng thời tiếp tục checkpoint hiện có:
+
+```powershell
+python -m tacs.multiseed --device cuda --batch-size 4 --num-workers 2
+```
 
 Sau khi hoàn tất, mean và sample standard deviation (`ddof=1`) được xuất ra:
 

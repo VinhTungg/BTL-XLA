@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import asdict
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,7 @@ from tacs.baselines import BaselineModel
 from tacs.model import TinyPatchTokenTaskNetwork
 from tacs.train import (
     ExperimentConfig,
+    _restore_training_checkpoint,
     build_optimizer_and_scheduler,
     build_dataloaders,
     evaluate,
@@ -212,6 +214,70 @@ class TrainingInfrastructureTest(unittest.TestCase):
             with torch.no_grad():
                 self.assertTrue(torch.allclose(model1(x), model2(x), atol=1e-6))
 
+    def test_resume_restores_model_optimizer_scheduler_and_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_path = Path(tmp_dir) / "checkpoint_latest.pt"
+            config = ExperimentConfig(
+                baseline="no_context",
+                epochs=3,
+                output_dir=tmp_dir,
+                device="cpu",
+            )
+            source_model = BaselineModel(num_classes=10, embedding_dim=64)
+            source_optimizer, source_scheduler = build_optimizer_and_scheduler(
+                source_model, config
+            )
+            source_optimizer.step()
+            source_scheduler.step()
+            with torch.no_grad():
+                next(source_model.parameters()).fill_(0.25)
+            torch.save(
+                {
+                    "epoch": 1,
+                    "model_state_dict": source_model.state_dict(),
+                    "optimizer_state_dict": source_optimizer.state_dict(),
+                    "scheduler_state_dict": source_scheduler.state_dict(),
+                    "val_accuracy": 0.4,
+                    "best_val_accuracy": 0.5,
+                    "config": asdict(config),
+                    "history": [{"epoch": 1}],
+                    "elapsed_training_time_s": 12.5,
+                    "scaler_state_dict": {},
+                    "torch_rng_state": torch.get_rng_state(),
+                    "cuda_rng_state_all": None,
+                },
+                checkpoint_path,
+            )
+
+            target_model = BaselineModel(num_classes=10, embedding_dim=64)
+            target_optimizer, target_scheduler = build_optimizer_and_scheduler(
+                target_model, config
+            )
+            scaler = torch.amp.GradScaler("cuda", enabled=False)
+            start_epoch, best_acc, history, elapsed = _restore_training_checkpoint(
+                checkpoint_path,
+                target_model,
+                target_optimizer,
+                target_scheduler,
+                scaler,
+                config,
+                torch.device("cpu"),
+            )
+
+            self.assertEqual(start_epoch, 2)
+            self.assertEqual(best_acc, 0.5)
+            self.assertEqual(history, [{"epoch": 1}])
+            self.assertEqual(elapsed, 12.5)
+            self.assertTrue(
+                torch.equal(
+                    next(source_model.parameters()),
+                    next(target_model.parameters()),
+                )
+            )
+            self.assertEqual(
+                target_scheduler.state_dict(), source_scheduler.state_dict()
+            )
+
     def test_dry_run_is_reproducible(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             out1 = Path(tmp_dir) / "run1"
@@ -237,6 +303,7 @@ class TrainingInfrastructureTest(unittest.TestCase):
                 baseline="no_context",
                 seed=42,
                 dry_run=True,
+                device="cpu",
                 split_file=str(split_path),
                 output_dir=str(out1),
             )
@@ -244,6 +311,7 @@ class TrainingInfrastructureTest(unittest.TestCase):
                 baseline="no_context",
                 seed=42,
                 dry_run=True,
+                device="cpu",
                 split_file=str(split_path),
                 output_dir=str(out2),
             )
@@ -294,11 +362,15 @@ class TrainingInfrastructureTest(unittest.TestCase):
             self.assertEqual(encoder_payload["metadata"]["baseline"], "no_context")
             self.assertEqual(encoder_payload["metadata"]["data"]["source"], "cifar10")
             checkpoint = torch.load(
-                out1 / "checkpoint_best.pt",
+                out1 / "checkpoint_latest.pt",
                 map_location="cpu",
                 weights_only=True,
             )
             self.assertIn("scheduler_state_dict", checkpoint)
+            self.assertIn("scaler_state_dict", checkpoint)
+            self.assertEqual(checkpoint["epoch"], 1)
+            self.assertFalse(res1["training_recipe"]["amp_enabled"])
+            self.assertIsNone(res1["training_recipe"]["resumed_from_epoch"])
 
     def test_real_data_failure_does_not_fallback_or_write_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
