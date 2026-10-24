@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader, Subset, TensorDataset
 
 from tacs import TACSLoss, TACSModel
@@ -12,6 +13,7 @@ from tacs.data import (
     FullPoolContextDataset,
     SplitIndices,
     cifar_num_classes,
+    cifar_transforms,
     normalize_cifar_name,
     stratified_split,
 )
@@ -147,6 +149,17 @@ class StratifiedSplitTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "không được hỗ trợ"):
             normalize_cifar_name("imagenet")
+
+    def test_dinov3_evaluation_transform_produces_256_pixel_images(self) -> None:
+        _, evaluation_transform = cifar_transforms(
+            "cifar100",
+            image_size=256,
+            normalization="dinov3",
+        )
+        image = Image.new("RGB", (32, 32), color=(127, 64, 32))
+        transformed = evaluation_transform(image)
+
+        self.assertEqual(transformed.shape, (3, 256, 256))
 
 
 class ContextDatasetTest(unittest.TestCase):

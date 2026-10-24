@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from tacs import TACSLoss, TACSModel
+from tacs import DINOv3VisionEncoder, TACSLoss, TACSModel
 
 
 class TACSModelTest(unittest.TestCase):
@@ -60,6 +60,14 @@ class TACSModelTest(unittest.TestCase):
             if parameter.grad is not None
         )
         self.assertGreater(encoder_grad, 0.0)
+
+    def test_dinov3_vits16_encoder_contract_without_downloading_weights(self) -> None:
+        encoder = DINOv3VisionEncoder(pretrained=False).eval()
+        with torch.no_grad():
+            embeddings = encoder(torch.randn(1, 3, 256, 256))
+
+        self.assertEqual(embeddings.shape, (1, 384))
+        self.assertGreater(sum(p.numel() for p in encoder.parameters()), 21_000_000)
 
 
 if __name__ == "__main__":

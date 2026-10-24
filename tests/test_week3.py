@@ -253,6 +253,26 @@ class TACSLoopTest(unittest.TestCase):
         self.assertEqual(config.split_file, "data/splits/cifar100_seed42.json")
         self.assertEqual(config.output_dir, "outputs/cifar100/tacs")
 
+    def test_cli_enables_dinov3_paper_backbone(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "tacs.train",
+                "--dataset",
+                "cifar100",
+                "--backbone",
+                "dinov3_vits16",
+                "--no-pretrained-backbone",
+            ],
+        ):
+            config = parse_args()
+
+        self.assertEqual(config.backbone, "dinov3_vits16")
+        self.assertFalse(config.pretrained_backbone)
+        self.assertEqual(config.embedding_dim, 384)
+        self.assertEqual(config.image_size, 256)
+
     def test_cli_parses_and_validates_tacs_objective_options(self) -> None:
         with patch.object(
             sys,

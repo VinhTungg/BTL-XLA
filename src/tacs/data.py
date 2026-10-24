@@ -26,6 +26,11 @@ CIFAR_NORMALIZATION = {
     ),
 }
 
+DINOV3_NORMALIZATION = (
+    (0.485, 0.456, 0.406),
+    (0.229, 0.224, 0.225),
+)
+
 
 def normalize_cifar_name(dataset_name: str) -> str:
     """Return the canonical name used in configs, metadata, and split files."""
@@ -255,20 +260,38 @@ def stratified_split(
 
     return split
 
-def cifar_transforms(dataset_name: str = "cifar10"):
+def cifar_transforms(
+    dataset_name: str = "cifar10",
+    image_size: int = 32,
+    normalization: str = "cifar",
+):
     """Create train/evaluation transforms with dataset-specific statistics."""
 
     from torchvision import transforms
 
     normalized_name = normalize_cifar_name(dataset_name)
-    mean, std = CIFAR_NORMALIZATION[normalized_name]
+    if image_size <= 0:
+        raise ValueError("image_size phải lớn hơn 0")
+    if normalization == "cifar":
+        mean, std = CIFAR_NORMALIZATION[normalized_name]
+    elif normalization == "dinov3":
+        mean, std = DINOV3_NORMALIZATION
+    else:
+        raise ValueError(f"Normalization không được hỗ trợ: {normalization}")
+
+    if image_size == 32:
+        train_spatial = [transforms.RandomCrop(size=32, padding=4)]
+        evaluation_spatial = []
+    else:
+        train_spatial = [
+            transforms.RandomResizedCrop(image_size),
+            transforms.RandomVerticalFlip(),
+        ]
+        evaluation_spatial = [transforms.Resize((image_size, image_size))]
 
     train_transform = transforms.Compose(
         [
-            transforms.RandomCrop(
-                size=32,
-                padding=4,
-            ),
+            *train_spatial,
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             transforms.Normalize(
@@ -280,6 +303,7 @@ def cifar_transforms(dataset_name: str = "cifar10"):
 
     evaluation_transform = transforms.Compose(
         [
+            *evaluation_spatial,
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=mean,
@@ -321,6 +345,8 @@ def build_cifar(
     candidate_ratio: float = 0.20,
     seed: int = 42,
     download: bool = False,
+    image_size: int = 32,
+    normalization: str = "cifar",
 ) -> CIFARDatasets:
     """Build real CIFAR-10 or CIFAR-100 query/pool/validation/test subsets."""
 
@@ -328,7 +354,11 @@ def build_cifar(
 
     normalized_name = normalize_cifar_name(dataset_name)
     dataset_class = CIFAR10 if normalized_name == "cifar10" else CIFAR100
-    train_transform, evaluation_transform = cifar_transforms(normalized_name)
+    train_transform, evaluation_transform = cifar_transforms(
+        normalized_name,
+        image_size=image_size,
+        normalization=normalization,
+    )
 
     raw_train = dataset_class(root=str(root), train=True, download=download)
     split_path = Path(split_file)
@@ -387,6 +417,8 @@ def build_cifar10(
     candidate_ratio: float = 0.20,
     seed: int = 42,
     download: bool = False,
+    image_size: int = 32,
+    normalization: str = "cifar",
 ) -> CIFAR10Datasets:
     """Tạo bốn tập CIFAR-10 dùng trong dự án."""
     return build_cifar(
@@ -397,6 +429,8 @@ def build_cifar10(
         candidate_ratio,
         seed,
         download,
+        image_size,
+        normalization,
     )
 
 
@@ -407,6 +441,8 @@ def build_cifar100(
     candidate_ratio: float = 0.20,
     seed: int = 42,
     download: bool = False,
+    image_size: int = 32,
+    normalization: str = "cifar",
 ) -> CIFARDatasets:
     """Build the real CIFAR-100 subsets used by paper-aligned experiments."""
 
@@ -418,6 +454,8 @@ def build_cifar100(
         candidate_ratio,
         seed,
         download,
+        image_size,
+        normalization,
     )
 
 class ContextDataset(Dataset):

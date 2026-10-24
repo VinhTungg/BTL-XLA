@@ -73,6 +73,22 @@ class TrainingInfrastructureTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "num_classes=100"):
             ExperimentConfig(dataset="cifar100", num_classes=10)
 
+    def test_dinov3_config_derives_paper_backbone_defaults(self) -> None:
+        config = ExperimentConfig(
+            dataset="cifar100",
+            backbone="dinov3_vits16",
+            baseline="no_context",
+        )
+
+        self.assertEqual(config.embedding_dim, 384)
+        self.assertEqual(config.image_size, 256)
+        self.assertEqual(
+            config.output_dir,
+            "outputs/cifar100/dinov3_vits16/no_context",
+        )
+        with self.assertRaisesRegex(ValueError, "embedding_dim=384"):
+            ExperimentConfig(backbone="dinov3_vits16", embedding_dim=64)
+
     def test_validation_does_not_update_gradients(self) -> None:
         model = BaselineModel(num_classes=5, embedding_dim=16)
         images = torch.randn(8, 3, 32, 32)

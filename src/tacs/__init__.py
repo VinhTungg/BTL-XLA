@@ -9,7 +9,13 @@ from .data import (
     build_cifar100,
 )
 from .losses import TACSLoss, TACSLossOutput
-from .model import TACSModel, TACSOutput, TinyVisionEncoder
+from .model import (
+    DINOv3VisionEncoder,
+    TACSModel,
+    TACSOutput,
+    TinyVisionEncoder,
+    create_vision_encoder,
+)
 from .retrieval import (
     CosineSimilarityRetriever,
     SimilarityContextDataset,
@@ -30,6 +36,8 @@ __all__ = [
     "TACSModel",
     "TACSOutput",
     "TinyVisionEncoder",
+    "DINOv3VisionEncoder",
+    "create_vision_encoder",
     "TACSLoss",
     "TACSLossOutput",
     "BaselineModel",

@@ -31,7 +31,11 @@ from .data import (
 )
 from .device import configure_stdout, resolve_device
 from .metrics import PeakMemoryMonitor
-from .model import TACSModel, TinyVisionEncoder
+from .model import (
+    TACSModel,
+    backbone_embedding_dim,
+    create_vision_encoder,
+)
 from .retrieval import (
     CosineSimilarityRetriever,
     SimilarityContextDataset,
@@ -50,12 +54,15 @@ class ExperimentConfig:
 
     baseline: str = "no_context"
     dataset: str = "cifar10"
+    backbone: str = "tiny"
+    pretrained_backbone: bool = True
     seed: int = 42
     epochs: int = 5
     batch_size: int = 64
     lr: float = 1e-3
     weight_decay: float = 1e-4
-    embedding_dim: int = 64
+    embedding_dim: int | None = None
+    image_size: int | None = None
     num_classes: int | None = None
     device: str = "auto"
     data_root: str = "data"
@@ -73,6 +80,8 @@ class ExperimentConfig:
 
     def __post_init__(self) -> None:
         self.dataset = normalize_cifar_name(self.dataset)
+        if self.backbone not in {"tiny", "dinov3_vits16"}:
+            raise ValueError(f"Backbone không được hỗ trợ: {self.backbone}")
         expected_classes = cifar_num_classes(self.dataset)
         if self.num_classes is None:
             self.num_classes = expected_classes
@@ -82,13 +91,33 @@ class ExperimentConfig:
                 f"received {self.num_classes}"
             )
 
+        expected_embedding_dim = backbone_embedding_dim(self.backbone)
+        if self.embedding_dim is None:
+            self.embedding_dim = expected_embedding_dim
+        elif self.backbone != "tiny" and self.embedding_dim != expected_embedding_dim:
+            raise ValueError(
+                f"{self.backbone} requires embedding_dim={expected_embedding_dim}, "
+                f"received {self.embedding_dim}"
+            )
+
+        expected_image_size = 32 if self.backbone == "tiny" else 256
+        if self.image_size is None:
+            self.image_size = expected_image_size
+        elif self.image_size != expected_image_size:
+            raise ValueError(
+                f"{self.backbone} requires image_size={expected_image_size}, "
+                f"received {self.image_size}"
+            )
+
         if self.split_file is None:
             self.split_file = f"data/splits/{self.dataset}_seed42.json"
-        if self.output_dir is None:
+        if self.backbone == "tiny":
             base = "outputs" if self.dataset == "cifar10" else f"outputs/{self.dataset}"
+        else:
+            base = f"outputs/{self.dataset}/{self.backbone}"
+        if self.output_dir is None:
             self.output_dir = f"{base}/{self.baseline}"
         if self.standard_encoder_path is None:
-            base = "outputs" if self.dataset == "cifar10" else f"outputs/{self.dataset}"
             self.standard_encoder_path = f"{base}/no_context/best_encoder.pt"
 
     def save(self, path: str | Path) -> None:
@@ -127,7 +156,7 @@ def _load_standard_encoder(
     config: ExperimentConfig,
     device: torch.device,
     expected_split_sha256: str | None = None,
-) -> tuple[TinyVisionEncoder, Path, str]:
+) -> tuple[nn.Module, Path, str]:
     dataset_label = config.dataset.replace("cifar", "CIFAR-")
     encoder_path = Path(config.standard_encoder_path)
     if not encoder_path.is_file():
@@ -153,6 +182,7 @@ def _load_standard_encoder(
         or metadata.get("schema_version") != ENCODER_CHECKPOINT_SCHEMA_VERSION
         or metadata.get("baseline") != "no_context"
         or metadata.get("embedding_dim") != config.embedding_dim
+        or metadata.get("backbone", "tiny") != config.backbone
         or data_metadata.get("source") != config.dataset
         or (
             expected_split_sha256 is not None
@@ -175,7 +205,11 @@ def _load_standard_encoder(
             "Hãy train no_context trên toàn bộ query_train và validation."
         )
 
-    encoder = TinyVisionEncoder(config.embedding_dim).to(device)
+    encoder = create_vision_encoder(
+        config.backbone,
+        embedding_dim=config.embedding_dim,
+        pretrained=False,
+    ).to(device)
     try:
         encoder.load_state_dict(payload["encoder_state_dict"], strict=True)
     except (KeyError, RuntimeError) as error:
@@ -200,6 +234,8 @@ def _embedding_cache_metadata(
         "candidate_indices_sha256": _candidate_indices_sha256(candidate_pool),
         "encoder_sha256": encoder_sha256,
         "embedding_dim": config.embedding_dim,
+        "backbone": config.backbone,
+        "image_size": config.image_size,
         "transform": f"{config.dataset}-evaluation-v1",
         "normalization": "l2",
     }
@@ -208,7 +244,7 @@ def _embedding_cache_metadata(
 def _load_or_rebuild_retriever(
     config: ExperimentConfig,
     candidate_pool: Dataset,
-    encoder: TinyVisionEncoder,
+    encoder: nn.Module,
     device: torch.device,
     split_sha256: str | None,
     encoder_sha256: str,
@@ -261,6 +297,8 @@ def build_dataloaders(
             root=config.data_root,
             split_file=config.split_file,
             download=False,
+            image_size=config.image_size,
+            normalization=("dinov3" if config.backbone == "dinov3_vits16" else "cifar"),
         )
     except Exception as error:
         raise RuntimeError(
@@ -507,6 +545,11 @@ def build_dataloaders(
 
     data_info = {
         "source": config.dataset,
+        "backbone": config.backbone,
+        "image_size": config.image_size,
+        "normalization": (
+            "dinov3" if config.backbone == "dinov3_vits16" else "cifar"
+        ),
         "data_root": config.data_root,
         "split_file": config.split_file,
         "split_sha256": split_sha256,
@@ -771,6 +814,11 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     # Retrieval setup may instantiate an encoder internally. Resetting here
     # gives TACS Full and Two-Stage identical model initialisation for one seed.
     torch.manual_seed(config.seed)
+    encoder = create_vision_encoder(
+        config.backbone,
+        embedding_dim=config.embedding_dim,
+        pretrained=config.pretrained_backbone,
+    ).to(device)
 
     if config.baseline in {"tacs", "two_stage"}:
         model = TACSModel(
@@ -778,6 +826,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             embedding_dim=config.embedding_dim,
             temperature=config.selector_temperature,
             detach_candidate_embeddings=True,
+            encoder=encoder,
         ).to(device)
 
         def tacs_criterion(outputs, targets):
@@ -790,6 +839,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             num_classes=config.num_classes,
             embedding_dim=config.embedding_dim,
             baseline_type=config.baseline,
+            encoder=encoder,
         ).to(device)
         criterion = nn.CrossEntropyLoss()
 
@@ -880,6 +930,8 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
                         "schema_version": ENCODER_CHECKPOINT_SCHEMA_VERSION,
                         "baseline": config.baseline,
                         "embedding_dim": config.embedding_dim,
+                        "backbone": config.backbone,
+                        "image_size": config.image_size,
                         "data": data_info,
                     },
                 },
@@ -998,6 +1050,17 @@ def parse_args() -> ExperimentConfig:
         choices=["cifar10", "cifar100"],
         help="Bộ dữ liệu thật dùng cho thí nghiệm",
     )
+    parser.add_argument(
+        "--backbone",
+        default="tiny",
+        choices=["tiny", "dinov3_vits16"],
+        help="Backbone lightweight hoặc DINOv3 ViT-S/16 của paper",
+    )
+    parser.add_argument(
+        "--no-pretrained-backbone",
+        action="store_true",
+        help="Không tải pretrained weights (chỉ dùng cho kiểm tra kỹ thuật)",
+    )
     parser.add_argument("--epochs", type=int, default=5, help="Số epochs")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
@@ -1044,6 +1107,8 @@ def parse_args() -> ExperimentConfig:
     return ExperimentConfig(
         baseline=args.baseline,
         dataset=args.dataset,
+        backbone=args.backbone,
+        pretrained_backbone=not args.no_pretrained_backbone,
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,

@@ -80,6 +80,23 @@ Ví dụ smoke run trên CIFAR-100:
 python -m tacs.train --dataset cifar100 --baseline no_context --dry-run --device cpu
 ```
 
+## Backbone DINOv3 ViT-S/16
+
+Chế độ gần thiết lập paper dùng backbone DINOv3 ViT-S/16 qua `timm`:
+
+```powershell
+python -m tacs.train --dataset cifar100 --backbone dinov3_vits16 --baseline no_context --device cuda
+```
+
+Profile này tự động dùng embedding 384 chiều, ảnh 256×256, ImageNet
+normalization và pretrained weights `vit_small_patch16_dinov3.lvd1689m`.
+Lần chạy đầu cần Internet để tải weights và người dùng phải tuân thủ
+DINOv3 License. Thêm `--no-pretrained-backbone` chỉ để kiểm tra kỹ thuật;
+không dùng kết quả đó làm thí nghiệm báo cáo.
+
+Commit này thay backbone feature encoder. Ghép patch token query/context qua
+Task Network theo paper được triển khai ở nhiệm vụ tiếp theo.
+
 Mỗi `metrics.json` ghi rõ `data.source`, kích thước các tập và hash của
 file split để xác minh kết quả được tạo từ đúng dữ liệu.
 

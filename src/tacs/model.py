@@ -5,11 +5,19 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 
+DINOV3_VITS16_MODEL = "vit_small_patch16_dinov3.lvd1689m"
+BACKBONE_EMBEDDING_DIMS = {
+    "tiny": 64,
+    "dinov3_vits16": 384,
+}
+
+
 class TinyVisionEncoder(nn.Module):
     """Small encoder used for CPU tests; replaceable by a ViT later."""
 
     def __init__(self, embedding_dim: int = 64) -> None:
         super().__init__()
+        self.output_dim = embedding_dim
         self.features = nn.Sequential(
             nn.Conv2d(3, 16, 3, stride=2, padding=1),
             nn.GELU(),
@@ -21,6 +29,68 @@ class TinyVisionEncoder(nn.Module):
 
     def forward(self, images: Tensor) -> Tensor:
         return self.projection(self.features(images).flatten(1))
+
+
+class DINOv3VisionEncoder(nn.Module):
+    """ViT-S/16 DINOv3 image encoder backed by the official timm port."""
+
+    output_dim = 384
+    image_size = 256
+
+    def __init__(self, pretrained: bool = True) -> None:
+        super().__init__()
+        try:
+            import timm
+        except ImportError as error:
+            raise RuntimeError(
+                "DINOv3 yêu cầu timm>=1.0.20; hãy cài dependencies của project."
+            ) from error
+
+        self.model = timm.create_model(
+            DINOV3_VITS16_MODEL,
+            pretrained=pretrained,
+            num_classes=0,
+        )
+        model_dim = int(getattr(self.model, "num_features", self.output_dim))
+        if model_dim != self.output_dim:
+            raise RuntimeError(
+                f"DINOv3 ViT-S/16 phải trả về {self.output_dim} features, "
+                f"nhưng model trả về {model_dim}."
+            )
+
+    def forward(self, images: Tensor) -> Tensor:
+        embeddings = self.model(images)
+        if embeddings.ndim != 2 or embeddings.shape[-1] != self.output_dim:
+            raise RuntimeError(
+                "DINOv3 encoder phải trả về tensor [batch, 384]."
+            )
+        return embeddings
+
+
+def backbone_embedding_dim(backbone: str, tiny_embedding_dim: int = 64) -> int:
+    if backbone == "tiny":
+        return tiny_embedding_dim
+    if backbone not in BACKBONE_EMBEDDING_DIMS:
+        raise ValueError(f"Backbone không được hỗ trợ: {backbone}")
+    return BACKBONE_EMBEDDING_DIMS[backbone]
+
+
+def create_vision_encoder(
+    backbone: str,
+    embedding_dim: int = 64,
+    pretrained: bool = True,
+) -> nn.Module:
+    if backbone == "tiny":
+        return TinyVisionEncoder(embedding_dim)
+    if backbone == "dinov3_vits16":
+        expected_dim = backbone_embedding_dim(backbone)
+        if embedding_dim != expected_dim:
+            raise ValueError(
+                f"{backbone} yêu cầu embedding_dim={expected_dim}, "
+                f"nhưng nhận {embedding_dim}."
+            )
+        return DINOv3VisionEncoder(pretrained=pretrained)
+    raise ValueError(f"Backbone không được hỗ trợ: {backbone}")
 
 
 class TaskAlignedSelector(nn.Module):
@@ -113,10 +183,17 @@ class TACSModel(nn.Module):
         embedding_dim: int = 64,
         temperature: float = 0.1,
         detach_candidate_embeddings: bool = False,
+        encoder: nn.Module | None = None,
     ) -> None:
         super().__init__()
+        selector_encoder = encoder if encoder is not None else TinyVisionEncoder(embedding_dim)
+        encoder_dim = int(getattr(selector_encoder, "output_dim", embedding_dim))
+        if encoder_dim != embedding_dim:
+            raise ValueError(
+                f"Encoder output_dim={encoder_dim} không khớp embedding_dim={embedding_dim}"
+            )
         self.selector = TaskAlignedSelector(
-            TinyVisionEncoder(embedding_dim),
+            selector_encoder,
             temperature,
             detach_candidate_embeddings=detach_candidate_embeddings,
         )
