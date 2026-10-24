@@ -1,9 +1,9 @@
 """Hạ tầng huấn luyện và đánh giá dùng chung cho cả 3 baseline tuần 2.
 
-Hỗ trợ 3 baseline:
-1. no_context: Chỉ dùng query embedding, context vector = 0.
-2. random: Lấy 1 candidate ngẫu nhiên từ candidate pool (tái lập theo seed).
-3. similarity: Lấy 1 candidate có cosine similarity cao nhất từ candidate pool qua encoder chuẩn đã khóa.
+Hỗ trợ 3 baseline dùng chung Task Network patch-token:
+1. no_context: Chỉ dùng chuỗi patch token của query.
+2. random: Ghép query với 1 candidate ngẫu nhiên từ candidate pool.
+3. similarity: Ghép query với candidate có cosine similarity cao nhất.
 """
 
 from __future__ import annotations
@@ -522,12 +522,14 @@ def build_dataloaders(
             "strategy": "no_context",
             "retrieval_candidates_scanned": 0,
             "selector_candidates": 0,
+            "downstream_input": "query_patch_tokens",
         }
     elif config.baseline == "random":
         selection_info = {
             "strategy": "random_context",
             "retrieval_candidates_scanned": 0,
             "selector_candidates": 1,
+            "downstream_input": "concatenated_query_context_patch_tokens",
         }
     elif config.baseline == "similarity":
         selection_info = {
@@ -535,6 +537,7 @@ def build_dataloaders(
             "retrieval_candidates_scanned": len(candidate_pool),
             "selector_candidates": 1,
             "retrieval_cache": "validated_standard_encoder_embedding_cache",
+            "downstream_input": "concatenated_query_context_patch_tokens",
         }
     elif config.baseline == "tacs":
         selection_info = {
@@ -871,7 +874,7 @@ def build_optimizer_and_scheduler(
     """Create the AdamW + cosine recipe reported in the paper."""
 
     optimizer = torch.optim.AdamW(
-        model.parameters(),
+        (parameter for parameter in model.parameters() if parameter.requires_grad),
         lr=config.lr,
         weight_decay=config.weight_decay,
     )
@@ -913,14 +916,14 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         embedding_dim=config.embedding_dim,
         pretrained=config.pretrained_backbone,
     ).to(device)
+    task_network = create_task_network(
+        config.backbone,
+        num_classes=config.num_classes,
+        embedding_dim=config.embedding_dim,
+        pretrained=config.pretrained_backbone,
+    ).to(device)
 
     if config.baseline in {"tacs", "two_stage"}:
-        task_network = create_task_network(
-            config.backbone,
-            num_classes=config.num_classes,
-            embedding_dim=config.embedding_dim,
-            pretrained=config.pretrained_backbone,
-        ).to(device)
         model = TACSModel(
             num_classes=config.num_classes,
             embedding_dim=config.embedding_dim,
@@ -941,6 +944,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             embedding_dim=config.embedding_dim,
             baseline_type=config.baseline,
             encoder=encoder,
+            task_network=task_network,
         ).to(device)
         criterion = nn.CrossEntropyLoss()
 
@@ -1104,7 +1108,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     }
 
     metrics_payload = {
-        "metrics_schema_version": 3,
+        "metrics_schema_version": 4,
         "baseline": config.baseline,
         "seed": config.seed,
         "epochs": epochs,
@@ -1131,6 +1135,13 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             "scheduler_t_max": config.epochs,
             "configured_epochs": config.epochs,
             "executed_epochs": epochs,
+        },
+        "model_architecture": {
+            "downstream_task_network": "patch_token_transformer",
+            "backbone": config.backbone,
+            "retrieval_encoder_trainable": False,
+            "selector_encoder_trainable": config.baseline
+            in {"tacs", "two_stage"},
         },
         "best_val_acc": round(best_val_acc, 4),
         "data_setup_time_s": round(data_setup_time, 4),

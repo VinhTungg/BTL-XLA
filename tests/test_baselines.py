@@ -10,6 +10,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from tacs.baselines import BaselineModel
+from tacs.model import TinyPatchTokenTaskNetwork
 from tacs.train import (
     ExperimentConfig,
     build_optimizer_and_scheduler,
@@ -48,6 +49,60 @@ class BaselineModelTest(unittest.TestCase):
         embs = model.extract_embedding(self.query)
         norms = torch.norm(embs, p=2, dim=-1)
         self.assertTrue(torch.allclose(norms, torch.ones(4), atol=1e-5))
+
+    def test_all_baselines_use_the_patch_token_task_network(self) -> None:
+        for baseline_type, expected_tokens in (
+            ("no_context", 65),
+            ("random", 129),
+            ("similarity", 129),
+        ):
+            with self.subTest(baseline_type=baseline_type):
+                model = BaselineModel(
+                    num_classes=10,
+                    embedding_dim=32,
+                    baseline_type=baseline_type,
+                )
+                self.assertIsInstance(
+                    model.task_network,
+                    TinyPatchTokenTaskNetwork,
+                )
+                sequence_lengths: list[int] = []
+
+                def record_shape(_module, inputs) -> None:
+                    sequence_lengths.append(inputs[0].shape[1])
+
+                handle = model.task_network.blocks.layers[0].register_forward_pre_hook(
+                    record_shape
+                )
+                try:
+                    model(self.query, self.candidates_5d)
+                finally:
+                    handle.remove()
+                self.assertEqual(sequence_lengths, [expected_tokens])
+
+    def test_retrieval_encoder_is_frozen_while_task_network_trains(self) -> None:
+        model = BaselineModel(
+            num_classes=10,
+            embedding_dim=32,
+            baseline_type="random",
+        )
+        model.train()
+        self.assertFalse(model.encoder.training)
+        self.assertTrue(
+            all(not parameter.requires_grad for parameter in model.encoder.parameters())
+        )
+
+        model(self.query, self.candidates_5d).sum().backward()
+
+        self.assertTrue(
+            all(parameter.grad is None for parameter in model.encoder.parameters())
+        )
+        task_gradient = sum(
+            parameter.grad.abs().sum().item()
+            for parameter in model.task_network.parameters()
+            if parameter.grad is not None
+        )
+        self.assertGreater(task_gradient, 0.0)
 
 
 class TrainingInfrastructureTest(unittest.TestCase):
@@ -200,9 +255,17 @@ class TrainingInfrastructureTest(unittest.TestCase):
             self.assertEqual(res1["best_val_acc"], res2["best_val_acc"])
             self.assertEqual(res1["history"][0]["train_loss"], res2["history"][0]["train_loss"])
             self.assertEqual(res1["data"]["source"], "cifar10")
-            self.assertEqual(res1["metrics_schema_version"], 3)
+            self.assertEqual(res1["metrics_schema_version"], 4)
             self.assertEqual(res1["config"]["baseline"], "no_context")
             self.assertEqual(res1["selection"]["strategy"], "no_context")
+            self.assertEqual(
+                res1["selection"]["downstream_input"],
+                "query_patch_tokens",
+            )
+            self.assertEqual(
+                res1["model_architecture"]["downstream_task_network"],
+                "patch_token_transformer",
+            )
             self.assertGreater(res1["memory"]["peak_rss_mb"], 0)
             self.assertIsNone(res1["memory"]["peak_vram_allocated_mb"])
             self.assertIn("train_peak_rss_mb", res1["history"][0])

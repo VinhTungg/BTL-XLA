@@ -112,6 +112,11 @@ Profile `tiny` dùng Task Network Transformer nhỏ để unit test CPU. Profile
 `dinov3_vits16` dùng một ViT-S/16 DINOv3 cho Selector và một ViT-S/16
 DINOv3 riêng cho Downstream Task Network, đúng cấu trúc hai module của TACS.
 
+Ba baseline cũng dùng chính Task Network này: `no_context` chỉ truyền query
+patches, còn `random` và `similarity` truyền cặp query/context patches. Encoder
+dùng để lập cache similarity được đóng băng. Như vậy các mô hình
+khác nhau ở cách chọn context thay vì khác cấu trúc classifier.
+
 Mỗi `metrics.json` ghi rõ `data.source`, kích thước các tập và hash của
 file split để xác minh kết quả được tạo từ đúng dữ liệu.
 

@@ -36,9 +36,14 @@ def metric_payload(baseline: str) -> dict:
             "tacs": 9_000,
             "two_stage": 32,
         }[baseline],
+        "downstream_input": (
+            "query_patch_tokens"
+            if baseline == "no_context"
+            else "concatenated_query_context_patch_tokens"
+        ),
     }
     return {
-        "metrics_schema_version": 3,
+        "metrics_schema_version": 4,
         "baseline": baseline,
         "seed": 42,
         "epochs": 5,
@@ -46,6 +51,7 @@ def metric_payload(baseline: str) -> dict:
             "baseline": baseline,
             "batch_size": 64,
             "embedding_dim": 64,
+            "backbone": "tiny",
             "num_classes": 10,
             "lr": 1e-3,
             "min_lr": 0.0,
@@ -76,6 +82,12 @@ def metric_payload(baseline: str) -> dict:
             "scheduler_t_max": 5,
             "configured_epochs": 5,
             "executed_epochs": 5,
+        },
+        "model_architecture": {
+            "downstream_task_network": "patch_token_transformer",
+            "backbone": "tiny",
+            "retrieval_encoder_trainable": False,
+            "selector_encoder_trainable": baseline in {"tacs", "two_stage"},
         },
         "data_setup_time_s": 1.0,
         "total_time_s": 20.0,
@@ -126,6 +138,14 @@ class AnalyzeAllModelsTest(unittest.TestCase):
         with self.assertRaisesRegex(ANALYZE.BenchmarkValidationError, "test_result"):
             ANALYZE.validate_metric(incomplete, "tacs", require_complete=True)
         ANALYZE.validate_metric(incomplete, "tacs", require_complete=False)
+
+        unfair = metric_payload("random")
+        unfair["model_architecture"]["downstream_task_network"] = "pooled_mlp"
+        with self.assertRaisesRegex(
+            ANALYZE.BenchmarkValidationError,
+            "patch-token",
+        ):
+            ANALYZE.validate_metric(unfair, "random", require_complete=False)
 
     def test_writes_csv_json_and_markdown(self) -> None:
         rows = ANALYZE.build_rows(self.metrics)

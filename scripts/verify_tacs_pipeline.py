@@ -113,14 +113,14 @@ def main() -> None:
         for name, p in model.selector.named_parameters()
         if p.grad is not None
     ]
-    classifier_grads = [
+    task_network_grads = [
         (name, p.grad.norm().item())
-        for name, p in model.classifier.named_parameters()
+        for name, p in model.task_network.named_parameters()
         if p.grad is not None
     ]
 
     print(f"[*] Số lượng tham số Selector nhận gradient  : {len(selector_grads)} / {len(list(model.selector.parameters()))}")
-    print(f"[*] Số lượng tham số Classifier nhận gradient: {len(classifier_grads)} / {len(list(model.classifier.parameters()))}")
+    print(f"[*] Số lượng tham số Task Network nhận gradient: {len(task_network_grads)} / {len(list(model.task_network.parameters()))}")
 
     all_received_grad = (len(selector_grads) > 0) and all(g > 0 for _, g in selector_grads)
     print(f"[*] Gradient truyền về Selector thành công : {'[PASS]' if all_received_grad else '[FAIL]'}")

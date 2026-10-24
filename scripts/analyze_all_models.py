@@ -60,9 +60,9 @@ def validate_metric(
     require_complete: bool = True,
 ) -> None:
     context = f"metrics[{expected_baseline}]"
-    if payload.get("metrics_schema_version") != 3:
+    if payload.get("metrics_schema_version") != 4:
         raise BenchmarkValidationError(
-            f"{context} không dùng metrics schema v3; cần chạy lại bằng trainer hiện tại"
+            f"{context} không dùng metrics schema v4; cần chạy lại bằng trainer hiện tại"
         )
     if payload.get("baseline") != expected_baseline:
         raise BenchmarkValidationError(
@@ -123,7 +123,22 @@ def validate_metric(
             f"{context} không dùng AdamW + CosineAnnealingLR"
         )
 
+    architecture = _require(payload, "model_architecture", context)
+    if architecture.get("downstream_task_network") != "patch_token_transformer":
+        raise BenchmarkValidationError(
+            f"{context} không dùng chung Task Network patch-token"
+        )
+
     selection = _require(payload, "selection", context)
+    expected_downstream_input = (
+        "query_patch_tokens"
+        if expected_baseline == "no_context"
+        else "concatenated_query_context_patch_tokens"
+    )
+    if selection.get("downstream_input") != expected_downstream_input:
+        raise BenchmarkValidationError(
+            f"{context} có downstream input không khớp baseline"
+        )
     candidate_pool_size = data.get("effective_sizes", {}).get("candidate_pool")
     if expected_baseline == "tacs":
         if (
@@ -163,6 +178,7 @@ def validate_comparison(
         "split_sha256": lambda item: item["data"]["split_sha256"],
         "batch_size": lambda item: item["config"]["batch_size"],
         "embedding_dim": lambda item: item["config"]["embedding_dim"],
+        "backbone": lambda item: item["config"]["backbone"],
         "num_classes": lambda item: item["config"]["num_classes"],
         "lr": lambda item: item["config"]["lr"],
         "min_lr": lambda item: item["config"]["min_lr"],
@@ -170,6 +186,9 @@ def validate_comparison(
         "optimizer": lambda item: item["training_recipe"]["optimizer"],
         "scheduler": lambda item: item["training_recipe"]["scheduler"],
         "scheduler_t_max": lambda item: item["training_recipe"]["scheduler_t_max"],
+        "downstream_task_network": lambda item: item["model_architecture"][
+            "downstream_task_network"
+        ],
         "device": lambda item: item["runtime"]["device"],
         "torch_version": lambda item: item["runtime"]["torch_version"],
         "torch_num_threads": lambda item: item["runtime"]["torch_num_threads"],
@@ -218,6 +237,9 @@ def summarize_metric(payload: dict[str, Any]) -> dict[str, Any]:
         "torch_version": runtime["torch_version"],
         "optimizer": payload["training_recipe"]["optimizer"],
         "scheduler": payload["training_recipe"]["scheduler"],
+        "downstream_task_network": payload["model_architecture"][
+            "downstream_task_network"
+        ],
         "best_val_accuracy": payload["best_val_acc"],
         "test_accuracy": test_result.get("accuracy"),
         "avg_train_throughput_qps": _average(history, "throughput_qps"),

@@ -2,24 +2,18 @@
 
 from __future__ import annotations
 
-import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
 
-from .model import TinyVisionEncoder
+from .model import TinyPatchTokenTaskNetwork, TinyVisionEncoder
 
 
 class BaselineModel(nn.Module):
-    """Mô hình phân loại cho cả 3 baseline với cấu trúc chung tuân thủ WEEK_2_ASSIGNMENT.
+    """Baselines sharing the same patch-token downstream architecture as TACS.
 
-    Cấu trúc mạng:
-    - Backbone: TinyVisionEncoder (embedding_dim)
-    - Classifier: Linear(embedding_dim * 2, embedding_dim) -> GELU -> Linear(embedding_dim, num_classes)
-
-    Chế độ hoạt động:
-    - 'no_context': Context vector được đặt bằng vector 0 (torch.zeros_like(query_feat)).
-    - 'random': Context vector được mã hóa từ 1 candidate ngẫu nhiên lấy từ pool.
-    - 'similarity': Context vector được mã hóa từ 1 candidate có cosine similarity cao nhất.
+    The frozen encoder is used only to build reproducible similarity retrieval
+    caches.  Classification always goes through ``task_network`` so the three
+    baselines differ from TACS by context selection, not downstream capacity.
     """
 
     def __init__(
@@ -28,6 +22,8 @@ class BaselineModel(nn.Module):
         embedding_dim: int = 64,
         baseline_type: str = "no_context",
         encoder: nn.Module | None = None,
+        task_network: nn.Module | None = None,
+        freeze_retrieval_encoder: bool = True,
     ) -> None:
         super().__init__()
         valid_types = {"no_context", "random", "similarity"}
@@ -38,11 +34,20 @@ class BaselineModel(nn.Module):
         self.num_classes = num_classes
 
         self.encoder = encoder if encoder is not None else TinyVisionEncoder(embedding_dim)
-        self.classifier = nn.Sequential(
-            nn.Linear(embedding_dim * 2, embedding_dim),
-            nn.GELU(),
-            nn.Linear(embedding_dim, num_classes),
+        self.freeze_retrieval_encoder = freeze_retrieval_encoder
+        if freeze_retrieval_encoder:
+            self.encoder.requires_grad_(False)
+        self.task_network = (
+            task_network
+            if task_network is not None
+            else TinyPatchTokenTaskNetwork(num_classes, embedding_dim)
         )
+
+    def train(self, mode: bool = True) -> "BaselineModel":
+        super().train(mode)
+        if self.freeze_retrieval_encoder:
+            self.encoder.eval()
+        return self
 
     def extract_embedding(self, images: Tensor) -> Tensor:
         """Trích xuất feature vector chuẩn hóa L2 từ encoder."""
@@ -59,19 +64,14 @@ class BaselineModel(nn.Module):
         Returns:
             logits: Tensor [B, num_classes]
         """
-        query_feat = self.extract_embedding(query)
-
         if self.baseline_type == "no_context" or candidates is None:
-            context_feat = torch.zeros_like(query_feat)
+            return self.task_network(query)
+        if candidates.ndim == 5:
+            context = candidates[:, 0]
+        elif candidates.ndim == 4:
+            context = candidates
         else:
-            if candidates.ndim == 5:
-                cand_img = candidates[:, 0]
-            elif candidates.ndim == 4:
-                cand_img = candidates
-            else:
-                raise ValueError(f"candidates phải có 4 hoặc 5 chiều, nhận ndim={candidates.ndim}")
-            context_feat = self.extract_embedding(cand_img)
-
-        fused = torch.cat((query_feat, context_feat), dim=-1)
-        logits = self.classifier(fused)
-        return logits
+            raise ValueError(
+                f"candidates phải có 4 hoặc 5 chiều, nhận ndim={candidates.ndim}"
+            )
+        return self.task_network(query, context)
