@@ -131,6 +131,12 @@ class TrainingInfrastructureTest(unittest.TestCase):
             self.assertEqual(res1["best_val_acc"], res2["best_val_acc"])
             self.assertEqual(res1["history"][0]["train_loss"], res2["history"][0]["train_loss"])
             self.assertEqual(res1["data"]["source"], "cifar10")
+            self.assertEqual(res1["metrics_schema_version"], 2)
+            self.assertEqual(res1["config"]["baseline"], "no_context")
+            self.assertEqual(res1["selection"]["strategy"], "no_context")
+            self.assertGreater(res1["memory"]["peak_rss_mb"], 0)
+            self.assertIsNone(res1["memory"]["peak_vram_allocated_mb"])
+            self.assertIn("train_peak_rss_mb", res1["history"][0])
             self.assertEqual(
                 res1["data"]["full_sizes"],
                 {

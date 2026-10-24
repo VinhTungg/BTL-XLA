@@ -99,6 +99,13 @@ Two-Stage được khởi tạo lại từ cùng seed sau bước chuẩn bị d
 `metrics.json` bổ sung strategy, số candidate được quét/chấm điểm, thời gian
 setup/retrieval, latency end-to-end mỗi query và throughput validation.
 
+Trainer hiện dùng metrics schema v2 và đo peak RSS bằng monitor trong suốt từng
+pha setup/train/validation/test. Khi chạy CUDA, trainer đồng thời ghi peak VRAM
+allocated và reserved từ PyTorch. Script `scripts/analyze_all_models.py` chỉ tạo
+bảng/biểu đồ khi đủ năm artifact có cùng split, seed, epoch, batch size,
+embedding dimension và kết quả test trên toàn bộ CIFAR-10; dry-run hoặc metrics
+legacy bị từ chối ở chế độ báo cáo chính thức.
+
 ---
 
 ## 4. Kiểm thử và smoke test đã thực hiện
@@ -112,7 +119,7 @@ $env:PYTHONPATH = "src"
 python -m unittest discover -s tests -v
 ```
 
-Kết quả chạy gần nhất: suite mặc định có **34 test, 33 đạt và 1 integration
+Kết quả chạy gần nhất: suite mặc định có **38 test, 37 đạt và 1 integration
 test được skip theo thiết kế**. Khi bật riêng integration CIFAR-10 thật, bài đó
 đạt **1/1 (`OK`)**. Đây **chưa phải** kết quả huấn luyện đầy đủ hay so sánh
 hiệu năng mô hình.
@@ -228,7 +235,7 @@ Các việc **chưa hoàn tất**:
 ## 7. Kết luận
 
 Phần triển khai TACS Full và pipeline Two-Stage đã được tách đúng về candidate
-scope. Suite mặc định đạt **33/33 test được chạy** và skip 1 integration theo
+scope. Suite mặc định đạt **37/37 test được chạy** và skip 1 integration theo
 thiết kế; integration CIFAR-10 thật đạt **1/1** khi bật riêng. Các kết quả này
 xác nhận đường chạy, không phải bằng chứng về độ chính xác sau huấn luyện đầy đủ.
 

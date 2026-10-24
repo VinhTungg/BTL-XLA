@@ -105,6 +105,28 @@ hoặc không khớp checkpoint sẽ được tự động tái tạo.
 selector đánh giá, thời gian setup/retrieval, latency/query end-to-end và
 throughput validation để việc so sánh không nhầm giữa Full và top-k.
 
+## Benchmark 5 mô hình
+
+Trainer ghi metrics schema v2 với peak RSS, peak CUDA allocated/reserved, thời
+gian setup, latency end-to-end và cấu hình thí nghiệm. Sau khi train đủ năm mô
+hình với `--eval-test`, chạy:
+
+```powershell
+python scripts/analyze_all_models.py --outputs-root outputs --output-dir docs
+```
+
+Script kiểm tra cả năm lần chạy dùng CIFAR-10 thật, đúng kích thước đầy đủ, cùng
+split, seed, epoch, batch size và embedding dimension. Artifact dry-run, thiếu
+test result hoặc schema cũ sẽ bị từ chối. Kết quả gồm:
+
+- `docs/all_models_benchmark.csv`
+- `docs/all_models_benchmark.json`
+- `docs/all_models_benchmark.md`
+- `docs/all_models_comparison.png`
+
+Chỉ để kiểm tra pipeline bằng dry-run, có thể thêm `--allow-incomplete`; dữ liệu
+này không được dùng làm kết quả báo cáo.
+
 ## Chạy smoke training
 
 ```powershell

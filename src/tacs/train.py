@@ -16,7 +16,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import psutil
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -24,6 +23,7 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from .baselines import BaselineModel
 from .data import ContextDataset, FullPoolContextDataset, build_cifar10
 from .device import configure_stdout, resolve_device
+from .metrics import PeakMemoryMonitor
 from .model import TACSModel, TinyVisionEncoder
 from .retrieval import (
     CosineSimilarityRetriever,
@@ -73,12 +73,6 @@ class ExperimentConfig:
         p = Path(path)
         data = json.loads(p.read_text(encoding="utf-8"))
         return cls(**data)
-
-
-def get_current_rss_mb() -> float:
-    """Đo dung lượng RAM Resident Set Size (RSS) đang chiếm dụng theo MB."""
-    process = psutil.Process()
-    return round(process.memory_info().rss / (1024 * 1024), 2)
 
 
 def _sha256_file(path: Path) -> str:
@@ -441,8 +435,27 @@ def build_dataloaders(
         else None
     )
 
-    selection_info: dict[str, Any] | None = None
-    if config.baseline == "tacs":
+    selection_info: dict[str, Any]
+    if config.baseline == "no_context":
+        selection_info = {
+            "strategy": "no_context",
+            "retrieval_candidates_scanned": 0,
+            "selector_candidates": 0,
+        }
+    elif config.baseline == "random":
+        selection_info = {
+            "strategy": "random_context",
+            "retrieval_candidates_scanned": 0,
+            "selector_candidates": 1,
+        }
+    elif config.baseline == "similarity":
+        selection_info = {
+            "strategy": "cosine_top1",
+            "retrieval_candidates_scanned": len(candidate_pool),
+            "selector_candidates": 1,
+            "retrieval_cache": "validated_standard_encoder_embedding_cache",
+        }
+    elif config.baseline == "tacs":
         selection_info = {
             "strategy": "full_pool_tacs",
             "retrieval_candidates_scanned": 0,
@@ -535,7 +548,7 @@ def _full_candidate_bank_for_loader(
     )
 
 
-def train_one_epoch(
+def _train_one_epoch_impl(
     model: nn.Module,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
@@ -602,7 +615,20 @@ def train_one_epoch(
     }
 
 
-def evaluate(
+def train_one_epoch(
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: torch.optim.Optimizer,
+    criterion: Any,
+    device: torch.device,
+) -> dict[str, float | None]:
+    """Train one epoch and include peak process/CUDA memory."""
+    with PeakMemoryMonitor(device) as memory_monitor:
+        result = _train_one_epoch_impl(model, loader, optimizer, criterion, device)
+    return {**result, **memory_monitor.result().as_dict()}
+
+
+def _evaluate_impl(
     model: nn.Module,
     loader: DataLoader,
     criterion: Any,
@@ -666,6 +692,18 @@ def evaluate(
     }
 
 
+def evaluate(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: Any,
+    device: torch.device,
+) -> dict[str, float | None]:
+    """Evaluate one split and include peak process/CUDA memory."""
+    with PeakMemoryMonitor(device) as memory_monitor:
+        result = _evaluate_impl(model, loader, criterion, device)
+    return {**result, **memory_monitor.result().as_dict()}
+
+
 def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     """Chạy toàn bộ quy trình huấn luyện và đánh giá cho 1 baseline."""
     configure_stdout()
@@ -673,11 +711,12 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     device = resolve_device(config.device)
 
     data_setup_started_at = time.perf_counter()
-    train_loader, val_loader, test_loader, candidate_pool, data_info = build_dataloaders(
-        config,
-        device,
-    )
+    with PeakMemoryMonitor(device) as data_setup_memory_monitor:
+        train_loader, val_loader, test_loader, candidate_pool, data_info = (
+            build_dataloaders(config, device)
+        )
     data_setup_time = time.perf_counter() - data_setup_started_at
+    data_setup_memory = data_setup_memory_monitor.result().as_dict()
 
     out_dir = Path(config.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -732,7 +771,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
 
         train_res = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_res = evaluate(model, val_loader, criterion, device)
-        rss_mb = get_current_rss_mb()
+        rss_mb = max(train_res["peak_rss_mb"], val_res["peak_rss_mb"])
 
         epoch_record = {
             "epoch": epoch,
@@ -756,6 +795,16 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
                 "selection_precompute_time_s"
             ],
             "val_latency_ms_per_query": val_res["latency_ms_per_query"],
+            "train_peak_rss_mb": train_res["peak_rss_mb"],
+            "val_peak_rss_mb": val_res["peak_rss_mb"],
+            "train_peak_rss_delta_mb": train_res["peak_rss_delta_mb"],
+            "val_peak_rss_delta_mb": val_res["peak_rss_delta_mb"],
+            "train_peak_vram_allocated_mb": train_res[
+                "peak_vram_allocated_mb"
+            ],
+            "val_peak_vram_allocated_mb": val_res["peak_vram_allocated_mb"],
+            "train_peak_vram_reserved_mb": train_res["peak_vram_reserved_mb"],
+            "val_peak_vram_reserved_mb": val_res["peak_vram_reserved_mb"],
             "rss_mb": rss_mb,
         }
         history.append(epoch_record)
@@ -806,10 +855,63 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         test_result = evaluate(model, test_loader, criterion, device)
         print(f"  --> [TEST EVALUATION] Loss: {test_result['loss']:.4f}, Acc: {test_result['accuracy'] * 100:.2f}%")
 
+    phase_peak_rss = [data_setup_memory["peak_rss_mb"]]
+    phase_peak_vram_allocated = [data_setup_memory["peak_vram_allocated_mb"]]
+    phase_peak_vram_reserved = [data_setup_memory["peak_vram_reserved_mb"]]
+    for record in history:
+        phase_peak_rss.extend(
+            [record["train_peak_rss_mb"], record["val_peak_rss_mb"]]
+        )
+        phase_peak_vram_allocated.extend(
+            [
+                record["train_peak_vram_allocated_mb"],
+                record["val_peak_vram_allocated_mb"],
+            ]
+        )
+        phase_peak_vram_reserved.extend(
+            [
+                record["train_peak_vram_reserved_mb"],
+                record["val_peak_vram_reserved_mb"],
+            ]
+        )
+    if test_result is not None:
+        phase_peak_rss.append(test_result["peak_rss_mb"])
+        phase_peak_vram_allocated.append(test_result["peak_vram_allocated_mb"])
+        phase_peak_vram_reserved.append(test_result["peak_vram_reserved_mb"])
+
+    non_null_vram_allocated = [
+        value for value in phase_peak_vram_allocated if value is not None
+    ]
+    non_null_vram_reserved = [
+        value for value in phase_peak_vram_reserved if value is not None
+    ]
+    memory_summary = {
+        "data_setup": data_setup_memory,
+        "peak_rss_mb": max(phase_peak_rss),
+        "peak_vram_allocated_mb": (
+            max(non_null_vram_allocated) if non_null_vram_allocated else None
+        ),
+        "peak_vram_reserved_mb": (
+            max(non_null_vram_reserved) if non_null_vram_reserved else None
+        ),
+    }
+    run_time = time.perf_counter() - data_setup_started_at
+    runtime_info = {
+        "device": str(device),
+        "torch_version": torch.__version__,
+        "torch_num_threads": torch.get_num_threads(),
+        "gpu_name": (
+            torch.cuda.get_device_name(device) if device.type == "cuda" else None
+        ),
+    }
+
     metrics_payload = {
+        "metrics_schema_version": 2,
         "baseline": config.baseline,
         "seed": config.seed,
         "epochs": epochs,
+        "config": asdict(config),
+        "runtime": runtime_info,
         "data": data_info,
         "selection": data_info["selection"],
         "selector_temperature": (
@@ -825,7 +927,8 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         "best_val_acc": round(best_val_acc, 4),
         "data_setup_time_s": round(data_setup_time, 4),
         "total_time_s": total_time,
-        "end_to_end_time_s": round(data_setup_time + training_time, 4),
+        "end_to_end_time_s": round(run_time, 4),
+        "memory": memory_summary,
         "test_result": test_result,
         "history": history,
     }
