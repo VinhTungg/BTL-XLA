@@ -255,7 +255,7 @@ class TrainingInfrastructureTest(unittest.TestCase):
             self.assertEqual(res1["best_val_acc"], res2["best_val_acc"])
             self.assertEqual(res1["history"][0]["train_loss"], res2["history"][0]["train_loss"])
             self.assertEqual(res1["data"]["source"], "cifar10")
-            self.assertEqual(res1["metrics_schema_version"], 4)
+            self.assertEqual(res1["metrics_schema_version"], 5)
             self.assertEqual(res1["config"]["baseline"], "no_context")
             self.assertEqual(res1["selection"]["strategy"], "no_context")
             self.assertEqual(

@@ -133,6 +133,10 @@ hoặc không khớp checkpoint sẽ được tự động tái tạo.
 
 ## TACS Full và Two-Stage
 
+- Utility score trong TACS Selector dùng tích vô hướng trực tiếp
+  `z_queryᵀ z_candidate` theo Eq. (1), không chuẩn hóa L2. Cosine similarity
+  chỉ được dùng cho baseline `similarity` và tầng lọc thô của
+  `two_stage`.
 - `--baseline tacs` chấm điểm **toàn bộ candidate pool** cho mỗi query. Candidate
   được mã hóa thành một bank dùng chung, làm mới mỗi epoch, nên DataLoader không
   nhân bản 9.000 ảnh cho từng query. Bank được detach để giới hạn bộ nhớ; encoder

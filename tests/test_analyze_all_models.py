@@ -42,8 +42,10 @@ def metric_payload(baseline: str) -> dict:
             else "concatenated_query_context_patch_tokens"
         ),
     }
+    if baseline in {"tacs", "two_stage"}:
+        selection["selector_score_function"] = "raw_dot_product"
     return {
-        "metrics_schema_version": 4,
+        "metrics_schema_version": 5,
         "baseline": baseline,
         "seed": 42,
         "epochs": 5,

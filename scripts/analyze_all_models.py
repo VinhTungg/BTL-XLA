@@ -60,9 +60,9 @@ def validate_metric(
     require_complete: bool = True,
 ) -> None:
     context = f"metrics[{expected_baseline}]"
-    if payload.get("metrics_schema_version") != 4:
+    if payload.get("metrics_schema_version") != 5:
         raise BenchmarkValidationError(
-            f"{context} không dùng metrics schema v4; cần chạy lại bằng trainer hiện tại"
+            f"{context} không dùng metrics schema v5; cần chạy lại bằng trainer hiện tại"
         )
     if payload.get("baseline") != expected_baseline:
         raise BenchmarkValidationError(
@@ -144,6 +144,7 @@ def validate_metric(
         if (
             selection.get("strategy") != "full_pool_tacs"
             or selection.get("selector_candidates") != candidate_pool_size
+            or selection.get("selector_score_function") != "raw_dot_product"
         ):
             raise BenchmarkValidationError(f"{context} không phải TACS Full toàn pool")
     elif expected_baseline == "two_stage":
@@ -152,6 +153,7 @@ def validate_metric(
             selection.get("strategy") != "cosine_topk_then_tacs"
             or selection.get("retrieval_candidates_scanned") != candidate_pool_size
             or not 0 < selector_candidates <= candidate_pool_size
+            or selection.get("selector_score_function") != "raw_dot_product"
         ):
             raise BenchmarkValidationError(f"{context} không phải Two-Stage hợp lệ")
 

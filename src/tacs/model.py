@@ -254,6 +254,8 @@ def create_task_network(
 
 
 class TaskAlignedSelector(nn.Module):
+    """Learn task utility with the raw dot product from Eq. (1)."""
+
     def __init__(
         self,
         encoder: nn.Module,
@@ -271,14 +273,14 @@ class TaskAlignedSelector(nn.Module):
         if candidates.ndim != 5 or query.shape[0] != candidates.shape[0]:
             raise ValueError("expected query [B,C,H,W] and candidates [B,N,C,H,W]")
         batch, count, channels, height, width = candidates.shape
-        query_embedding = F.normalize(self.encoder(query), dim=-1)
+        query_embedding = self.encoder(query)
         flat_candidates = candidates.reshape(batch * count, channels, height, width)
         if self.detach_candidate_embeddings:
             with torch.no_grad():
                 candidate_embedding = self.encoder(flat_candidates)
         else:
             candidate_embedding = self.encoder(flat_candidates)
-        candidate_embedding = F.normalize(candidate_embedding.reshape(batch, count, -1), dim=-1)
+        candidate_embedding = candidate_embedding.reshape(batch, count, -1)
         scores = torch.einsum("bd,bnd->bn", query_embedding, candidate_embedding)
         if self.training:
             weights = F.gumbel_softmax(scores, tau=self.temperature, hard=True, dim=-1)
@@ -301,8 +303,8 @@ class TaskAlignedSelector(nn.Module):
         if candidate_embeddings.ndim not in {2, 3}:
             raise ValueError("expected candidate embeddings [N,D] or [B,N,D]")
 
-        query_embedding = F.normalize(self.encoder(query), dim=-1)
-        candidate_embedding = F.normalize(candidate_embeddings, dim=-1)
+        query_embedding = self.encoder(query)
+        candidate_embedding = candidate_embeddings
         if candidate_embedding.ndim == 2:
             scores = torch.matmul(query_embedding, candidate_embedding.T)
             count = candidate_embedding.shape[0]

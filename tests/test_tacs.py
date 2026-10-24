@@ -8,6 +8,14 @@ from tacs import (
     TACSLoss,
     TACSModel,
 )
+from tacs.model import TaskAlignedSelector
+
+
+class PixelVectorEncoder(torch.nn.Module):
+    output_dim = 2
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return images[:, :2, 0, 0]
 
 
 class TACSModelTest(unittest.TestCase):
@@ -67,6 +75,28 @@ class TACSModelTest(unittest.TestCase):
         first = self.model(self.query, self.candidates).selection_weights
         second = self.model(self.query, self.candidates).selection_weights
         self.assertTrue(torch.equal(first, second))
+
+    def test_selector_uses_raw_dot_product_not_cosine_similarity(self) -> None:
+        selector = TaskAlignedSelector(PixelVectorEncoder()).eval()
+        query = torch.tensor([[[[3.0]], [[4.0]], [[0.0]]]])
+        candidates = torch.tensor(
+            [[
+                [[[6.0]], [[8.0]], [[0.0]]],
+                [[[0.0]], [[10.0]], [[0.0]]],
+            ]]
+        )
+
+        scores, weights, _, selected = selector(query, candidates)
+        bank_scores, _, _, _ = selector.forward_embedding_bank(
+            query,
+            torch.tensor([[6.0, 8.0], [0.0, 10.0]]),
+        )
+
+        expected = torch.tensor([[50.0, 40.0]])
+        self.assertTrue(torch.equal(scores, expected))
+        self.assertTrue(torch.equal(bank_scores, expected))
+        self.assertTrue(torch.equal(weights, torch.tensor([[1.0, 0.0]])))
+        self.assertTrue(torch.equal(selected, torch.tensor([[6.0, 8.0]])))
 
     def test_full_pool_embedding_bank_scores_every_candidate(self) -> None:
         self.model.eval()

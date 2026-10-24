@@ -549,6 +549,7 @@ def build_dataloaders(
             "downstream_input": "concatenated_query_context_patch_tokens",
             "selected_context_loading": "hard_top1_image_only",
             "gradient_estimator": "straight_through_embedding_proxy",
+            "selector_score_function": "raw_dot_product",
         }
     elif config.baseline == "two_stage":
         selection_info = {
@@ -562,6 +563,7 @@ def build_dataloaders(
             "downstream_input": "concatenated_query_context_patch_tokens",
             "selected_context_loading": "hard_top1_image_only",
             "gradient_estimator": "straight_through_embedding_proxy",
+            "selector_score_function": "raw_dot_product",
         }
 
     data_info = {
@@ -1108,7 +1110,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     }
 
     metrics_payload = {
-        "metrics_schema_version": 4,
+        "metrics_schema_version": 5,
         "baseline": config.baseline,
         "seed": config.seed,
         "epochs": epochs,
