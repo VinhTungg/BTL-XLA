@@ -95,9 +95,11 @@ DINOv3 License. Thêm `--no-pretrained-backbone` chỉ để kiểm tra kỹ thu
 không dùng kết quả đó làm thí nghiệm báo cáo.
 
 Trainer dùng AdamW và `CosineAnnealingLR` cho mọi mô hình để việc so
-sánh công bằng. Profile DINOv3 mặc định 100 epochs theo paper; profile
+sánh công bằng; có thể thêm linear warm-up bằng `--warmup-epochs`. Profile DINOv3 mặc định 100 epochs theo paper; profile
 `tiny` giữ 5 epochs cho kiểm tra nhanh. Có thể ghi đè bằng `--epochs`,
-`--lr` và `--min-lr`. Mỗi epoch lưu `learning_rate` và
+`--lr` và `--min-lr`. Khi VRAM không đủ cho batch paper, dùng
+`--batch-size 4 --gradient-accumulation-steps 16` để giữ batch hiệu dụng
+64. Mỗi epoch lưu `learning_rate` và
 `next_learning_rate` trong `metrics.json`; checkpoint lưu cả optimizer và
 scheduler state.
 
@@ -173,7 +175,7 @@ throughput validation để việc so sánh không nhầm giữa Full và top-k.
 
 ## Benchmark 5 mô hình
 
-Trainer ghi metrics schema v5 với peak RSS, peak CUDA allocated/reserved, thời
+Trainer ghi metrics schema v6 với peak RSS, peak CUDA allocated/reserved, thời
 gian setup, latency end-to-end và cấu hình thí nghiệm. Sau khi train đủ năm mô
 hình với `--eval-test`, chạy:
 
@@ -226,10 +228,10 @@ lại từ đầu. Một run đang dở được tiếp tục từ checkpoint g�
 `data/splits/cifar100_seed42.json`, do
 đó độ lệch chuẩn phản ánh biến thiên huấn luyện thay vì thay đổi tập dữ liệu.
 
-Ví dụ phù hợp GPU laptop 4 GB, đồng thời tiếp tục checkpoint hiện có:
+Ví dụ phù hợp GPU laptop/Colab T4, dùng micro-batch 4 nhưng giữ batch hiệu dụng 64:
 
 ```powershell
-python -m tacs.multiseed --device cuda --batch-size 4 --num-workers 2
+python -m tacs.multiseed --device cuda --batch-size 4 --gradient-accumulation-steps 16 --lr 1e-4 --warmup-epochs 5 --num-workers 2
 ```
 
 Sau khi hoàn tất, mean và sample standard deviation (`ddof=1`) được xuất ra:
@@ -241,20 +243,22 @@ Sau khi hoàn tất, mean và sample standard deviation (`ddof=1`) được xu�
 ## Chạy trên Google Colab
 
 Notebook `notebooks/TACS_Colab.ipynb` tự mount Google Drive, cài project, tải
-CIFAR-100, kiểm tra GPU và chạy runner theo từng seed. Output được ghi vào
-`MyDrive/TACS_outputs`, nên khi Colab ngắt phiên chỉ cần kết nối lại và chạy lại
+CIFAR-100, kiểm tra GPU và chạy runner theo từng seed. Output v2 được ghi vào
+`MyDrive/TACS_outputs_v2`, nên khi Colab ngắt phiên chỉ cần kết nối lại và chạy lại
 notebook để resume.
 
-Tạo bundle gồm source, split CIFAR-100 và checkpoint seed 42 hiện tại:
+Tạo bundle nhẹ gồm source và split CIFAR-100, không kèm checkpoint pilot cũ:
 
 ```powershell
-.\scripts\package_colab.ps1
+.\scripts\package_colab.ps1 -WithoutCheckpoint
 ```
 
 File `artifacts/TACS_Colab_Bundle.zip` sinh ra không được commit. Upload file đó
 vào thư mục gốc Google Drive, mở notebook trên Colab, chọn runtime GPU và chạy
-các cell theo thứ tự. Notebook mặc định giữ batch size 4 và quản lý cả ba
-seed `42 43 44` trong cùng một lệnh. Khi Colab ngắt, chạy lại notebook; runner
+các cell theo thứ tự. Notebook mặc định dùng batch vật lý 4, tích lũy 16 bước
+(batch hiệu dụng 64), learning rate `1e-4`, warm-up 5 epoch và quản lý cả ba
+seed `42 43 44` trong cùng một lệnh. Thư mục v2 tách biệt hoàn toàn với kết quả
+pilot cũ. Khi Colab ngắt, chạy lại notebook; runner
 tự bỏ qua run hoàn chỉnh và resume run còn dở. Chỉ coi thí nghiệm là xong khi
 cell xác minh cuối cùng xác nhận đủ `metrics.json`, kết quả test và ba file
 `multiseed_summary.json`, `multiseed_summary.csv`, `multiseed_summary.md`.
