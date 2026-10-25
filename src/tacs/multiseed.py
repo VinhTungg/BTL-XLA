@@ -42,8 +42,10 @@ class RunnerConfig:
     device: str = "auto"
     epochs: int | None = None
     batch_size: int = 64
+    gradient_accumulation_steps: int = 1
     lr: float = 1e-3
     min_lr: float = 0.0
+    warmup_epochs: int = 0
     weight_decay: float = 1e-4
     topk_candidates: int = 32
     selector_temperature: float = 0.1
@@ -108,10 +110,14 @@ def build_train_command(config: RunnerConfig, seed: int, baseline: str) -> list[
         str(seed),
         "--batch-size",
         str(config.batch_size),
+        "--gradient-accumulation-steps",
+        str(config.gradient_accumulation_steps),
         "--lr",
         str(config.lr),
         "--min-lr",
         str(config.min_lr),
+        "--warmup-epochs",
+        str(config.warmup_epochs),
         "--weight-decay",
         str(config.weight_decay),
         "--device",
@@ -175,8 +181,10 @@ def is_complete_run(
         "pretrained_backbone": config.pretrained_backbone,
         "seed": seed,
         "batch_size": config.batch_size,
+        "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "lr": config.lr,
         "min_lr": config.min_lr,
+        "warmup_epochs": config.warmup_epochs,
         "weight_decay": config.weight_decay,
         "split_file": str(config.resolved_split_file),
         "topk_candidates": config.topk_candidates,
@@ -411,8 +419,10 @@ def parse_args(argv: Sequence[str] | None = None) -> RunnerConfig:
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--epochs", type=int)
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--min-lr", type=float, default=0.0)
+    parser.add_argument("--warmup-epochs", type=int, default=0)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--topk-candidates", type=int, default=32)
     parser.add_argument("--selector-temperature", type=float, default=0.1)
@@ -441,6 +451,11 @@ def parse_args(argv: Sequence[str] | None = None) -> RunnerConfig:
         parser.error("--epochs phải lớn hơn 0")
     if args.batch_size <= 0:
         parser.error("--batch-size phải lớn hơn 0")
+    if args.gradient_accumulation_steps <= 0:
+        parser.error("--gradient-accumulation-steps phải lớn hơn 0")
+    resolved_epochs = args.epochs or (100 if args.backbone == "dinov3_vits16" else 5)
+    if args.warmup_epochs < 0 or args.warmup_epochs >= resolved_epochs:
+        parser.error("--warmup-epochs phải thỏa 0 <= warmup-epochs < epochs")
     if args.lr <= 0:
         parser.error("--lr phải lớn hơn 0")
     if args.min_lr < 0 or args.min_lr >= args.lr:
@@ -463,8 +478,10 @@ def parse_args(argv: Sequence[str] | None = None) -> RunnerConfig:
         device=args.device,
         epochs=args.epochs,
         batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         lr=args.lr,
         min_lr=args.min_lr,
+        warmup_epochs=args.warmup_epochs,
         weight_decay=args.weight_decay,
         topk_candidates=args.topk_candidates,
         selector_temperature=args.selector_temperature,

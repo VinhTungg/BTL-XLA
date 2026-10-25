@@ -39,8 +39,10 @@ def write_complete_run(
             "pretrained_backbone": config.pretrained_backbone,
             "seed": seed,
             "batch_size": config.batch_size,
+            "gradient_accumulation_steps": config.gradient_accumulation_steps,
             "lr": config.lr,
             "min_lr": config.min_lr,
+            "warmup_epochs": config.warmup_epochs,
             "weight_decay": config.weight_decay,
             "split_file": str(config.resolved_split_file),
             "topk_candidates": config.topk_candidates,
@@ -84,6 +86,8 @@ class MultiSeedRunnerTest(unittest.TestCase):
         self.assertTrue(config.amp)
         self.assertTrue(config.resume)
         self.assertEqual(config.configured_epochs, 100)
+        self.assertEqual(config.gradient_accumulation_steps, 1)
+        self.assertEqual(config.warmup_epochs, 0)
 
     def test_command_uses_isolated_seed_paths_and_standard_encoder(self) -> None:
         config = RunnerConfig(
@@ -91,6 +95,8 @@ class MultiSeedRunnerTest(unittest.TestCase):
             backbone="tiny",
             outputs_root=Path("results"),
             epochs=3,
+            gradient_accumulation_steps=4,
+            warmup_epochs=1,
             dry_run=True,
             pretrained_backbone=False,
         )
@@ -104,6 +110,10 @@ class MultiSeedRunnerTest(unittest.TestCase):
         )
         self.assertIn("--dry-run", command)
         self.assertIn("--no-pretrained-backbone", command)
+        accumulation_index = command.index("--gradient-accumulation-steps") + 1
+        warmup_index = command.index("--warmup-epochs") + 1
+        self.assertEqual(command[accumulation_index], "4")
+        self.assertEqual(command[warmup_index], "1")
         self.assertLess(
             ordered_baselines(("two_stage", "no_context")).index("no_context"),
             ordered_baselines(("two_stage", "no_context")).index("two_stage"),

@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tacs.baselines import BaselineModel
 from tacs.model import TinyPatchTokenTaskNetwork
 from tacs.train import (
+    METRICS_SCHEMA_VERSION,
     ExperimentConfig,
     _restore_training_checkpoint,
     build_optimizer_and_scheduler,
@@ -175,12 +176,65 @@ class TrainingInfrastructureTest(unittest.TestCase):
             )
         )
 
+    def test_warmup_then_cosine_schedule(self) -> None:
+        model = BaselineModel(num_classes=10, embedding_dim=16)
+        config = ExperimentConfig(
+            epochs=10,
+            lr=1e-3,
+            min_lr=1e-5,
+            warmup_epochs=2,
+        )
+
+        optimizer, scheduler = build_optimizer_and_scheduler(model, config)
+
+        self.assertIsInstance(scheduler, torch.optim.lr_scheduler.SequentialLR)
+        self.assertAlmostEqual(optimizer.param_groups[0]["lr"], 1e-4)
+        optimizer.step()
+        scheduler.step()
+        self.assertAlmostEqual(optimizer.param_groups[0]["lr"], 5.5e-4)
+        optimizer.step()
+        scheduler.step()
+        self.assertAlmostEqual(optimizer.param_groups[0]["lr"], 1e-3)
+
+    def test_gradient_accumulation_reduces_optimizer_steps(self) -> None:
+        class Classifier(nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.linear = nn.Linear(3, 2)
+
+            def forward(self, query, candidates=None):
+                return self.linear(query)
+
+        model = Classifier()
+        loader = DataLoader(
+            TensorDataset(torch.randn(10, 3), torch.randint(0, 2, (10,))),
+            batch_size=2,
+        )
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
+        criterion = nn.CrossEntropyLoss()
+
+        with patch.object(optimizer, "step", wraps=optimizer.step) as step:
+            result = train_one_epoch(
+                model,
+                loader,
+                optimizer,
+                criterion,
+                torch.device("cpu"),
+                gradient_accumulation_steps=2,
+            )
+
+        self.assertEqual(step.call_count, 3)
+        self.assertEqual(result["optimizer_steps"], 3)
+
     def test_training_config_rejects_invalid_schedule_values(self) -> None:
         for kwargs in (
             {"epochs": 0},
             {"lr": 0.0},
             {"lr": 1e-3, "min_lr": 1e-3},
             {"weight_decay": -1e-4},
+            {"gradient_accumulation_steps": 0},
+            {"epochs": 5, "warmup_epochs": 5},
+            {"warmup_epochs": -1},
         ):
             with self.subTest(kwargs=kwargs):
                 with self.assertRaises(ValueError):
@@ -323,7 +377,7 @@ class TrainingInfrastructureTest(unittest.TestCase):
             self.assertEqual(res1["best_val_acc"], res2["best_val_acc"])
             self.assertEqual(res1["history"][0]["train_loss"], res2["history"][0]["train_loss"])
             self.assertEqual(res1["data"]["source"], "cifar10")
-            self.assertEqual(res1["metrics_schema_version"], 5)
+            self.assertEqual(res1["metrics_schema_version"], METRICS_SCHEMA_VERSION)
             self.assertEqual(res1["config"]["baseline"], "no_context")
             self.assertEqual(res1["selection"]["strategy"], "no_context")
             self.assertEqual(

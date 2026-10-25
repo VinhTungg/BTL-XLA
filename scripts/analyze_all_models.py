@@ -60,9 +60,9 @@ def validate_metric(
     require_complete: bool = True,
 ) -> None:
     context = f"metrics[{expected_baseline}]"
-    if payload.get("metrics_schema_version") != 5:
+    if payload.get("metrics_schema_version") != 6:
         raise BenchmarkValidationError(
-            f"{context} không dùng metrics schema v5; cần chạy lại bằng trainer hiện tại"
+            f"{context} không dùng metrics schema v6; cần chạy lại bằng trainer hiện tại"
         )
     if payload.get("baseline") != expected_baseline:
         raise BenchmarkValidationError(

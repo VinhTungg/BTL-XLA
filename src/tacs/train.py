@@ -48,7 +48,7 @@ from .retrieval import (
 
 ENCODER_CHECKPOINT_SCHEMA_VERSION = 1
 EMBEDDING_CACHE_SCHEMA_VERSION = 1
-METRICS_SCHEMA_VERSION = 5
+METRICS_SCHEMA_VERSION = 6
 
 
 @dataclass
@@ -62,8 +62,10 @@ class ExperimentConfig:
     seed: int = 42
     epochs: int | None = None
     batch_size: int = 64
+    gradient_accumulation_steps: int = 1
     lr: float = 1e-3
     min_lr: float = 0.0
+    warmup_epochs: int = 0
     weight_decay: float = 1e-4
     embedding_dim: int | None = None
     image_size: int | None = None
@@ -92,6 +94,10 @@ class ExperimentConfig:
             self.epochs = 100 if self.backbone == "dinov3_vits16" else 5
         elif self.epochs <= 0:
             raise ValueError("epochs must be positive")
+        if self.gradient_accumulation_steps <= 0:
+            raise ValueError("gradient_accumulation_steps must be positive")
+        if self.warmup_epochs < 0 or self.warmup_epochs >= self.epochs:
+            raise ValueError("warmup_epochs must satisfy 0 <= warmup_epochs < epochs")
         if self.lr <= 0:
             raise ValueError("lr must be positive")
         if self.min_lr < 0 or self.min_lr >= self.lr:
@@ -708,6 +714,7 @@ def _train_one_epoch_impl(
     device: torch.device,
     scaler: torch.amp.GradScaler | None = None,
     amp_enabled: bool = False,
+    gradient_accumulation_steps: int = 1,
 ) -> dict[str, float]:
     """Huấn luyện 1 epoch."""
     model.train()
@@ -720,15 +727,20 @@ def _train_one_epoch_impl(
     total_loss = 0.0
     correct = 0
     total = 0
+    if gradient_accumulation_steps <= 0:
+        raise ValueError("gradient_accumulation_steps must be positive")
+    num_batches = len(loader)
+    final_window_size = num_batches % gradient_accumulation_steps
+    optimizer_steps = 0
+    optimizer.zero_grad(set_to_none=True)
 
-    for batch in loader:
+    for batch_index, batch in enumerate(loader, start=1):
         query, target, candidates = unpack_batch(batch)
         query = query.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
         if candidates is not None:
             candidates = candidates.to(device, non_blocking=True)
 
-        optimizer.zero_grad(set_to_none=True)
         with _autocast_context(device, amp_enabled):
             if candidate_bank is not None:
                 candidate_embeddings = candidate_bank
@@ -756,13 +768,27 @@ def _train_one_epoch_impl(
                 logits = model(query, candidates)
             loss_value = criterion(logits, target)
             loss = loss_value.total if hasattr(loss_value, "total") else loss_value
+        window_size = gradient_accumulation_steps
+        if final_window_size and batch_index > num_batches - final_window_size:
+            window_size = final_window_size
+        backward_loss = loss / window_size
         if scaler is not None and scaler.is_enabled():
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+            scaler.scale(backward_loss).backward()
         else:
-            loss.backward()
-            optimizer.step()
+            backward_loss.backward()
+
+        should_step = (
+            batch_index % gradient_accumulation_steps == 0
+            or batch_index == num_batches
+        )
+        if should_step:
+            if scaler is not None and scaler.is_enabled():
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+            optimizer_steps += 1
 
         total_loss += loss.item() * query.size(0)
         pred_logits = logits.context_logits if hasattr(logits, "context_logits") else logits
@@ -794,6 +820,7 @@ def _train_one_epoch_impl(
             end_to_end_time * 1000 / max(1, total),
             4,
         ),
+        "optimizer_steps": optimizer_steps,
     }
 
 
@@ -805,6 +832,7 @@ def train_one_epoch(
     device: torch.device,
     scaler: torch.amp.GradScaler | None = None,
     amp_enabled: bool = False,
+    gradient_accumulation_steps: int = 1,
 ) -> dict[str, float | None]:
     """Train one epoch and include peak process/CUDA memory."""
     with PeakMemoryMonitor(device) as memory_monitor:
@@ -816,6 +844,7 @@ def train_one_epoch(
             device,
             scaler=scaler,
             amp_enabled=amp_enabled,
+            gradient_accumulation_steps=gradient_accumulation_steps,
         )
     return {**result, **memory_monitor.result().as_dict()}
 
@@ -936,11 +965,24 @@ def build_optimizer_and_scheduler(
         lr=config.lr,
         weight_decay=config.weight_decay,
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=config.epochs,
-        eta_min=config.min_lr,
+    cosine_epochs = config.epochs - config.warmup_epochs
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=cosine_epochs, eta_min=config.min_lr
     )
+    if config.warmup_epochs:
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=config.warmup_epochs,
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[config.warmup_epochs],
+        )
+    else:
+        scheduler = cosine_scheduler
     return optimizer, scheduler
 
 
@@ -955,6 +997,8 @@ RESUME_CONFIG_KEYS = (
     "lr",
     "min_lr",
     "weight_decay",
+    "gradient_accumulation_steps",
+    "warmup_epochs",
     "topk_candidates",
     "selector_temperature",
     "policy_weight",
@@ -1154,6 +1198,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             device,
             scaler=scaler,
             amp_enabled=amp_enabled,
+            gradient_accumulation_steps=config.gradient_accumulation_steps,
         )
         val_res = evaluate(
             model,
@@ -1182,6 +1227,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
                 "selection_precompute_time_s"
             ],
             "train_latency_ms_per_query": train_res["latency_ms_per_query"],
+            "optimizer_steps": train_res["optimizer_steps"],
             "val_throughput_qps": val_res["throughput"],
             "val_time_s": val_res["time"],
             "val_end_to_end_time_s": val_res["end_to_end_time_s"],
@@ -1356,11 +1402,21 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         ),
         "training_recipe": {
             "optimizer": "AdamW",
-            "scheduler": "CosineAnnealingLR",
+            "scheduler": (
+                "LinearWarmup+CosineAnnealingLR"
+                if config.warmup_epochs
+                else "CosineAnnealingLR"
+            ),
             "initial_lr": config.lr,
             "minimum_lr": config.min_lr,
             "weight_decay": config.weight_decay,
-            "scheduler_t_max": config.epochs,
+            "scheduler_t_max": config.epochs - config.warmup_epochs,
+            "warmup_epochs": config.warmup_epochs,
+            "micro_batch_size": config.batch_size,
+            "gradient_accumulation_steps": config.gradient_accumulation_steps,
+            "effective_batch_size": (
+                config.batch_size * config.gradient_accumulation_steps
+            ),
             "configured_epochs": config.epochs,
             "executed_epochs": epochs,
             "amp_enabled": amp_enabled,
@@ -1434,12 +1490,24 @@ def parse_args() -> ExperimentConfig:
         help="Số epochs (mặc định: tiny=5, DINOv3=100 theo paper)",
     )
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
+    parser.add_argument(
+        "--gradient-accumulation-steps",
+        type=int,
+        default=1,
+        help="Số micro-batch được tích lũy trước mỗi optimizer step",
+    )
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument(
         "--min-lr",
         type=float,
         default=0.0,
         help="Learning rate tối thiểu của cosine annealing",
+    )
+    parser.add_argument(
+        "--warmup-epochs",
+        type=int,
+        default=0,
+        help="Số epoch linear warm-up trước cosine annealing",
     )
     parser.add_argument(
         "--weight-decay",
@@ -1489,6 +1557,11 @@ def parse_args() -> ExperimentConfig:
         parser.error("--epochs phải lớn hơn 0")
     if args.lr <= 0:
         parser.error("--lr phải lớn hơn 0")
+    if args.gradient_accumulation_steps <= 0:
+        parser.error("--gradient-accumulation-steps phải lớn hơn 0")
+    resolved_epochs = args.epochs or (100 if args.backbone == "dinov3_vits16" else 5)
+    if args.warmup_epochs < 0 or args.warmup_epochs >= resolved_epochs:
+        parser.error("--warmup-epochs phải thỏa 0 <= warmup-epochs < epochs")
     if args.min_lr < 0 or args.min_lr >= args.lr:
         parser.error("--min-lr phải thỏa 0 <= min-lr < lr")
     if args.weight_decay < 0:
@@ -1512,8 +1585,10 @@ def parse_args() -> ExperimentConfig:
         resume=not args.no_resume,
         epochs=args.epochs,
         batch_size=args.batch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         lr=args.lr,
         min_lr=args.min_lr,
+        warmup_epochs=args.warmup_epochs,
         weight_decay=args.weight_decay,
         seed=args.seed,
         device=args.device,

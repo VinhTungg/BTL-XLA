@@ -45,7 +45,7 @@ def metric_payload(baseline: str) -> dict:
     if baseline in {"tacs", "two_stage"}:
         selection["selector_score_function"] = "raw_dot_product"
     return {
-        "metrics_schema_version": 5,
+        "metrics_schema_version": 6,
         "baseline": baseline,
         "seed": 42,
         "epochs": 5,
