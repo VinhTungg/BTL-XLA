@@ -12,3 +12,4 @@ runs/
 tmp/
 .vscode/
 .agents/
+artifacts/

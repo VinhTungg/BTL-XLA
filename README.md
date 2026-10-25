@@ -238,6 +238,24 @@ Sau khi hoàn tất, mean và sample standard deviation (`ddof=1`) được xu�
 - `outputs/cifar100/dinov3_vits16/multiseed_summary.csv`
 - `outputs/cifar100/dinov3_vits16/multiseed_summary.md`
 
+## Chạy trên Google Colab
+
+Notebook `notebooks/TACS_Colab.ipynb` tự mount Google Drive, cài project, tải
+CIFAR-100, kiểm tra GPU và chạy runner theo từng seed. Output được ghi vào
+`MyDrive/TACS_outputs`, nên khi Colab ngắt phiên chỉ cần kết nối lại và chạy lại
+notebook để resume.
+
+Tạo bundle gồm source, split CIFAR-100 và checkpoint seed 42 hiện tại:
+
+```powershell
+.\scripts\package_colab.ps1
+```
+
+File `artifacts/TACS_Colab_Bundle.zip` sinh ra không được commit. Upload file đó
+vào thư mục gốc Google Drive, mở notebook trên Colab, chọn runtime GPU và chạy
+các cell theo thứ tự. Notebook mặc định giữ batch size 4 và chạy seed 42 trước;
+sau khi hoàn tất, đổi lần lượt sang seed 43 và 44.
+
 ## Chạy smoke training
 
 ```powershell
