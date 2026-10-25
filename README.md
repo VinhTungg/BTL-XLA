@@ -253,8 +253,11 @@ Tạo bundle gồm source, split CIFAR-100 và checkpoint seed 42 hiện tại:
 
 File `artifacts/TACS_Colab_Bundle.zip` sinh ra không được commit. Upload file đó
 vào thư mục gốc Google Drive, mở notebook trên Colab, chọn runtime GPU và chạy
-các cell theo thứ tự. Notebook mặc định giữ batch size 4 và chạy seed 42 trước;
-sau khi hoàn tất, đổi lần lượt sang seed 43 và 44.
+các cell theo thứ tự. Notebook mặc định giữ batch size 4 và quản lý cả ba
+seed `42 43 44` trong cùng một lệnh. Khi Colab ngắt, chạy lại notebook; runner
+tự bỏ qua run hoàn chỉnh và resume run còn dở. Chỉ coi thí nghiệm là xong khi
+cell xác minh cuối cùng xác nhận đủ `metrics.json`, kết quả test và ba file
+`multiseed_summary.json`, `multiseed_summary.csv`, `multiseed_summary.md`.
 
 ## Chạy smoke training
 
