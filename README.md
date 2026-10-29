@@ -310,5 +310,7 @@ Remove-Item Env:PYTHONPATH
 - `docs/REPORT.md`: báo cáo kỹ thuật.
 - `docs/PROGRESS.md`: tiến độ dự án.
 - `docs/DECISIONS.md`: quyết định kỹ thuật.
+- `docs/CIFAR100_TACS_SEED42_RESULTS.md`: kết quả TACS 100 epoch trên CIFAR-100,
+  manifest artifact và checksum checkpoint.
 - `docs/BAO_CAO_TIEN_DO_TUAN_1.md`: báo cáo tiến độ và nghiệm thu toàn diện Tuần 1.
 - `docs/BAO_CAO_TIEN_DO_TUAN_2.md`: báo cáo tiến độ và kết quả thực nghiệm 3 baseline Tuần 2.
