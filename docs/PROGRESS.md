@@ -1,5 +1,18 @@
 # Tiến độ
 
+## Mốc cập nhật 30/10/2026: CIFAR-100/DINOv3
+
+- Đã thu thập TACS seed 42, 100 epoch, test accuracy 85,66%; xem
+  [manifest kết quả](CIFAR100_TACS_SEED42_RESULTS.md).
+- Đã lập [kế hoạch từ hiện tại đến demo và bảo vệ](ROADMAP_REPRODUCTION_TO_DEMO.md)
+  với nhiệm vụ P00–P18. Việc lập kế hoạch không đồng nghĩa các nhiệm vụ đã hoàn thành.
+- Bước tiếp theo: kiểm kê artifact, audit paper/code, khóa protocol và kiểm chứng
+  gradient/batch/resume trước khi train dài; xây inference/demo sơ bộ song song.
+- Các trạng thái “Xong” và benchmark bên dưới thuộc giai đoạn CIFAR-10/tiny
+  trước đây, không chứng minh đã tái hiện đủ CIFAR-100/DINOv3 theo paper.
+
+## Lịch sử tiến độ đến 24/10/2026
+
 Cập nhật: 2026-10-24
 
 | Hạng mục                      | Trạng thái | Ghi chú                                                          |

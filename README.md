@@ -304,6 +304,9 @@ Remove-Item Env:PYTHONPATH
 
 ## Tài liệu
 
+- [Kế hoạch tiếp theo từ tái hiện đến demo và bảo vệ](docs/ROADMAP_REPRODUCTION_TO_DEMO.md):
+  kế hoạch hiện hành ngày 30/10/2026 cho CIFAR-100/DINOv3, gồm audit paper,
+  protocol, train nhiều seed, cải tiến, ngân sách GPU, demo và phân công ba người.
 - `docs/PROJECT_PLAN.md`: kế hoạch tổng thể.
 - `docs/WEEK_1_ASSIGNMENT.md`: phân công tuần 1.
 - `docs/WEEK_2_ASSIGNMENT.md`: phân công tuần 2 và chuỗi bàn giao baseline.

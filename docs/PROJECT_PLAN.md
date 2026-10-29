@@ -1,5 +1,11 @@
 # Kế hoạch toàn dự án
 
+> Cập nhật 30/10/2026: kế hoạch thực hiện tiếp theo cho CIFAR-100/DINOv3 nằm tại
+> [Roadmap tái hiện, cải tiến, demo và bảo vệ](ROADMAP_REPRODUCTION_TO_DEMO.md).
+> Tài liệu đó quy định các nhiệm vụ P00–P18, các điểm chưa xác định từ paper,
+> protocol DEV/FINAL, bốn baseline của tác giả và TACS, cùng Two-Stage của nhóm.
+> Nội dung bên dưới được giữ làm kế hoạch khởi đầu của dự án.
+
 ## Phạm vi đã chốt
 
 - MVP: phân loại ảnh, một context cho mỗi query.
