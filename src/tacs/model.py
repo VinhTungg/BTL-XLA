@@ -158,15 +158,38 @@ class TinyPatchTokenTaskNetwork(nn.Module):
         return self.head(tokens[:, 0])
 
 
+TASK_NETWORK_VERSIONS = ("legacy_v1", "role_v2")
+
+
 class DINOv3PatchTokenTaskNetwork(nn.Module):
-    """DINOv3 ViT-S/16 classifier that jointly attends query/context patches."""
+    """Joint patch attention with an explicit, learnable context role in v2.
+
+    Query patches are unchanged, preserving the pretrained single-image path.
+    Legacy v1 is kept only for loading/evaluating existing checkpoints.
+    """
 
     output_dim = 384
 
-    def __init__(self, num_classes: int, pretrained: bool = True) -> None:
+    def __init__(
+        self,
+        num_classes: int,
+        pretrained: bool = True,
+        task_network_version: str = "role_v2",
+    ) -> None:
         super().__init__()
+        if task_network_version not in TASK_NETWORK_VERSIONS:
+            raise ValueError(f"Unsupported task_network_version: {task_network_version}")
+        self.task_network_version = task_network_version
         self.backbone = DINOv3VisionEncoder(pretrained=pretrained).model
         self.head = nn.Linear(self.output_dim, num_classes)
+        if task_network_version == "role_v2":
+            self.context_role_embedding = nn.Parameter(torch.empty(1, 1, self.output_dim))
+            # Nonzero initialisation breaks query/context exchange symmetry immediately.
+            # Do not shift the training RNG stream relative to legacy_v1.
+            with torch.random.fork_rng(devices=[]):
+                nn.init.trunc_normal_(self.context_role_embedding, std=0.02)
+        else:
+            self.register_parameter("context_role_embedding", None)
 
     def _forward_tokens(
         self,
@@ -174,6 +197,10 @@ class DINOv3PatchTokenTaskNetwork(nn.Module):
         context: Tensor | None,
         context_proxy: Tensor | None,
     ) -> Tensor:
+        if context is not None and context.shape != query.shape:
+            raise ValueError("context must have the same [batch, channels, height, width] shape as query")
+        if context is None and context_proxy is not None:
+            raise ValueError("context_proxy requires a context image")
         model = self.backbone
         query_patches = model.patch_embed(query)
         query_tokens, rope = model._pos_embed(query_patches)
@@ -182,6 +209,8 @@ class DINOv3PatchTokenTaskNetwork(nn.Module):
             context_tokens = model.patch_embed(context)
             if context_tokens.ndim == 4:
                 context_tokens = context_tokens.flatten(1, 2)
+            if self.context_role_embedding is not None:
+                context_tokens = context_tokens + self.context_role_embedding.to(context_tokens.dtype)
             if context_proxy is not None:
                 if context_proxy.shape != (query.shape[0], self.output_dim):
                     raise ValueError(
@@ -239,7 +268,10 @@ def create_task_network(
     num_classes: int,
     embedding_dim: int = 64,
     pretrained: bool = True,
+    task_network_version: str = "role_v2",
 ) -> nn.Module:
+    if task_network_version not in TASK_NETWORK_VERSIONS:
+        raise ValueError(f"Unsupported task_network_version: {task_network_version}")
     if backbone == "tiny":
         return TinyPatchTokenTaskNetwork(num_classes, embedding_dim)
     if backbone == "dinov3_vits16":
@@ -249,7 +281,9 @@ def create_task_network(
                 f"{backbone} yêu cầu embedding_dim={expected_dim}, "
                 f"nhưng nhận {embedding_dim}."
             )
-        return DINOv3PatchTokenTaskNetwork(num_classes, pretrained=pretrained)
+        return DINOv3PatchTokenTaskNetwork(
+            num_classes, pretrained=pretrained, task_network_version=task_network_version
+        )
     raise ValueError(f"Backbone không được hỗ trợ: {backbone}")
 
 

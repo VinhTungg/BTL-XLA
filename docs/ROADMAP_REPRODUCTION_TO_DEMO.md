@@ -2,6 +2,11 @@
 
 Ngày lập: **30/10/2026**. Nhóm: **3 người**. Phạm vi chính: **phân loại CIFAR-100 với DINOv3 ViT-S/16**.
 
+Cập nhật 04/11/2026: đã phát hiện và sửa lỗi đối xứng query/context trong task
+network DINOv3, có namespace `role_v2` và kiểm thử checkpoint thật; xem
+[biên bản sửa và pilot đối chứng](CONTEXT_ROLE_FIX.md). Chưa có accuracy
+benchmark role_v2. Các mục kế hoạch dưới đây không tự động được đánh dấu hoàn tất.
+
 Đây là kế hoạch thực hiện tiếp theo, thay cho các mục “đã xong” trong tài liệu thí nghiệm CIFAR-10/tiny trước đây khi đánh giá mức sẵn sàng của bản CIFAR-100/DINOv3. Các nhiệm vụ phía dưới là **chưa hoàn thành**, trừ những artifact đã kiểm chứng tại mục 2. Việc viết kế hoạch không đồng nghĩa đã sửa trainer hay khởi chạy thí nghiệm.
 
 ## 1. Mục tiêu, phạm vi và cách hiểu “chuẩn”
@@ -30,7 +35,7 @@ Mốc 89,2% là số tham chiếu, không phải ngưỡng đạt môn học và
 | Dữ liệu V1 | 36.000 query / 9.000 pool / 5.000 validation / 10.000 test | Có validation riêng; khác diễn giải 20% trên toàn bộ 50.000 train |
 | Cấu hình V1 | 256×256, 100 epoch, AdamW, LR 1e-4, WD 1e-4, warm-up 5, batch 32×2, FP16 | Một phần khớp paper; LR/WD/warm-up là lựa chọn của nhóm |
 | TACS code | Dot product, Gumbel, reward, policy loss, ghép patch token | Có nền tảng; đường gradient/cache cần audit |
-| Similarity code | Lấy encoder từ checkpoint No-context | Chưa khớp cách diễn giải Frozen DINO pretrained của paper |
+| Similarity code | Lấy encoder riêng bị freeze từ checkpoint No-context, không phải task backbone fine-tuned | Cần tách dependency đường dẫn và audit provenance/protocol trước khi gắn nhãn baseline paper |
 | Feature-Averaged | Chưa có mode riêng trong trainer/runner | Phải bổ sung để bảng tái hiện đủ baseline tác giả |
 | Two-Stage | Đã có code và thử nghiệm cũ | Chưa phải bằng chứng cải tiến trên protocol CIFAR-100 mới |
 | Tổng hợp kết quả | Có multiseed; script analyze_all_models vẫn khóa CIFAR-10 và 5 mode cũ | Cần hỗ trợ dataset/protocol/method mới |
@@ -197,7 +202,7 @@ Log effective batch, advantage batch, optimizer steps, gradient norm, loss task/
 
 Feature-Averaged không phải trung bình xác suất của nhiều classifier, và không phải TACS với λ=0 một cách mặc định. Paper chưa đủ mô tả phần ghép feature; nếu thiếu code chính thức, viết rõ lựa chọn triển khai và xem đó là sai khác còn lại.
 
-Similarity cũ từ fine-tuned No-context có thể giữ tên `finetuned_similarity_legacy` để nghiên cứu phụ, không đưa số của nó vào hàng Frozen DINO. Không bắt buộc train No-context trước Frozen DINO mới; dependency đó là của code cũ.
+Đính chính sau kiểm tra source/artifact ngày 04/11: encoder xuất ở No-context là mạng truy xuất riêng bị freeze, không phải task backbone đã fine-tune. Giữ tên `similarity_legacy`; không gọi `finetuned_similarity_legacy` nếu chưa thực sự huấn luyện encoder truy xuất. Cần audit weights, transform, pool và task architecture trước khi gắn số cũ vào hàng Frozen DINO. Không bắt buộc train No-context trước Frozen DINO mới; dependency đó là của code cũ.
 
 **Nghiệm thu:** mỗi mode chạy smoke, parameter trainability đúng, feature-averaged không gọi policy loss, evaluation nhất quán. **Commit:** `feat: implement paper baselines with frozen DINO retrieval`.
 
@@ -500,7 +505,7 @@ Câu hỏi cả ba người phải trả lời được:
 - Nhóm dựng lại phần nào của tác giả và tự làm thêm gì?
 - Vì sao query/context khác lớp vẫn có ích? Reward đo điều gì?
 - Gumbel-Softmax và policy loss có vai trò khác nhau thế nào?
-- Vì sao dùng Frozen DINO thay vì encoder No-context cũ?
+- Vì sao tách pretrained frozen encoder khỏi đường dẫn artifact No-context cũ, và kiểm chứng hai encoder có cùng weights như thế nào?
 - Pool lấy ở đâu? Có dùng ảnh test hoặc nhãn test để chọn context không?
 - Ba seed có nghĩa gì? Tại sao không chỉ báo seed tốt nhất?
 - Tại sao chưa bằng89,2%? Điểm nào chắc chắn khác, điểm nào chưa biết?

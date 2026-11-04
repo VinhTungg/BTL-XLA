@@ -24,6 +24,9 @@ try {
     foreach ($file in @("pyproject.toml", "README.md", "uv.lock")) {
         Copy-Item -LiteralPath (Join-Path $repoRoot $file) -Destination $staging
     }
+    $docsDestination = Join-Path $staging "docs"
+    New-Item -ItemType Directory -Path $docsDestination -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs\CONTEXT_ROLE_FIX.md") -Destination $docsDestination
 
     $splitSource = Join-Path $repoRoot "data\splits\cifar100_seed42.json"
     $splitDestination = Join-Path $staging "data\splits"

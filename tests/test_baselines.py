@@ -144,7 +144,7 @@ class TrainingInfrastructureTest(unittest.TestCase):
         self.assertEqual(config.epochs, 100)
         self.assertEqual(
             config.output_dir,
-            "outputs/cifar100/dinov3_vits16/no_context",
+            "outputs/cifar100/dinov3_vits16/role_v2/no_context",
         )
         with self.assertRaisesRegex(ValueError, "embedding_dim=384"):
             ExperimentConfig(backbone="dinov3_vits16", embedding_dim=64)

@@ -33,6 +33,7 @@ from .data import (
 from .device import configure_stdout, resolve_device
 from .metrics import PeakMemoryMonitor
 from .model import (
+    TASK_NETWORK_VERSIONS,
     TACSModel,
     backbone_embedding_dim,
     create_task_network,
@@ -58,6 +59,7 @@ class ExperimentConfig:
     baseline: str = "no_context"
     dataset: str = "cifar10"
     backbone: str = "tiny"
+    task_network_version: str = "role_v2"
     pretrained_backbone: bool = True
     seed: int = 42
     epochs: int | None = None
@@ -88,6 +90,8 @@ class ExperimentConfig:
 
     def __post_init__(self) -> None:
         self.dataset = normalize_cifar_name(self.dataset)
+        if self.task_network_version not in TASK_NETWORK_VERSIONS:
+            raise ValueError(f"Unsupported task_network_version: {self.task_network_version}")
         if self.backbone not in {"tiny", "dinov3_vits16"}:
             raise ValueError(f"Backbone không được hỗ trợ: {self.backbone}")
         if self.epochs is None:
@@ -137,6 +141,8 @@ class ExperimentConfig:
             base = "outputs" if self.dataset == "cifar10" else f"outputs/{self.dataset}"
         else:
             base = f"outputs/{self.dataset}/{self.backbone}"
+            if self.task_network_version != "legacy_v1":
+                base = f"{base}/{self.task_network_version}"
         if self.output_dir is None:
             self.output_dir = f"{base}/{self.baseline}"
         if self.standard_encoder_path is None:
@@ -151,6 +157,7 @@ class ExperimentConfig:
     def load(cls, path: str | Path) -> "ExperimentConfig":
         p = Path(path)
         data = json.loads(p.read_text(encoding="utf-8"))
+        data.setdefault("task_network_version", "legacy_v1")
         return cls(**data)
 
 
@@ -990,6 +997,7 @@ RESUME_CONFIG_KEYS = (
     "baseline",
     "dataset",
     "backbone",
+    "task_network_version",
     "seed",
     "embedding_dim",
     "image_size",
@@ -1028,12 +1036,20 @@ def _restore_training_checkpoint(
             f"Checkpoint resume thiếu config: {checkpoint_path}. "
             "Dùng --no-resume để train lại từ đầu."
         )
+    checkpoint_config = dict(checkpoint_config)
+    checkpoint_config.setdefault("task_network_version", "legacy_v1")
     current_config = asdict(config)
     mismatches = [
         key
         for key in RESUME_CONFIG_KEYS
         if checkpoint_config.get(key) != current_config.get(key)
     ]
+    if "task_network_version" in mismatches:
+        raise RuntimeError(
+            "Checkpoint không khớp task_network_version. Chọn output directory khác "
+            "cho kiến trúc mới; chỉ dùng --task-network-version legacy_v1 "
+            "để tiếp tục checkpoint legacy."
+        )
     if mismatches:
         raise RuntimeError(
             "Checkpoint không khớp cấu hình hiện tại tại: "
@@ -1076,9 +1092,40 @@ def _restore_training_checkpoint(
     return epoch + 1, best_val_acc, history, elapsed_time
 
 
+def _validate_output_architecture(config: ExperimentConfig) -> None:
+    """Reject cross-version overwrites, including --no-resume, before data setup."""
+    out_dir = Path(config.output_dir)
+    config_path = out_dir / "config.json"
+    if config_path.is_file():
+        try:
+            previous_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"Cannot validate existing config: {config_path}") from exc
+    else:
+        checkpoint_path = next(
+            (out_dir / name for name in ("checkpoint_latest.pt", "checkpoint_best.pt")
+             if (out_dir / name).is_file()),
+            None,
+        )
+        if checkpoint_path is None:
+            return
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        previous_config = checkpoint.get("config") if isinstance(checkpoint, dict) else None
+    if not isinstance(previous_config, dict):
+        raise RuntimeError(f"Missing/invalid existing config in {out_dir}; use another output directory.")
+    previous_version = previous_config.get("task_network_version", "legacy_v1")
+    if previous_version != config.task_network_version:
+        raise RuntimeError(
+            f"Output {out_dir} belongs to task_network_version={previous_version}, "
+            f"not {config.task_network_version}. Use another output directory; "
+            "--no-resume does not override this architecture safeguard."
+        )
+
+
 def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
     """Chạy toàn bộ quy trình huấn luyện và đánh giá cho 1 baseline."""
     configure_stdout()
+    _validate_output_architecture(config)
     torch.manual_seed(config.seed)
     device = resolve_device(config.device)
     amp_enabled = bool(config.amp and device.type == "cuda")
@@ -1095,7 +1142,6 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
 
     out_dir = Path(config.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    config.save(out_dir / "config.json")
     print(
         f"Data source: {data_info['source']} | "
         f"effective sizes: {data_info['effective_sizes']}"
@@ -1114,6 +1160,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         num_classes=config.num_classes,
         embedding_dim=config.embedding_dim,
         pretrained=config.pretrained_backbone,
+        task_network_version=config.task_network_version,
     ).to(device)
 
     if config.baseline in {"tacs", "two_stage"}:
@@ -1174,6 +1221,8 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         )
         resumed_from_epoch = start_epoch - 1
 
+    # Failed resume must not replace the original run's configuration.
+    config.save(out_dir / "config.json")
     total_train_start = time.perf_counter()
     precision_label = "AMP FP16" if amp_enabled else "FP32"
     if resumed_from_epoch is None:
@@ -1426,6 +1475,12 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
         "model_architecture": {
             "downstream_task_network": "patch_token_transformer",
             "backbone": config.backbone,
+            "task_network_version": config.task_network_version,
+            "image_role_encoding": (
+                "query_and_context_type_embeddings" if config.backbone == "tiny"
+                else "context_role_embedding" if config.task_network_version == "role_v2"
+                else "none"
+            ),
             "retrieval_encoder_trainable": False,
             "selector_encoder_trainable": config.baseline
             in {"tacs", "two_stage"},
@@ -1472,6 +1527,12 @@ def parse_args() -> ExperimentConfig:
         "--no-pretrained-backbone",
         action="store_true",
         help="Không tải pretrained weights (chỉ dùng cho kiểm tra kỹ thuật)",
+    )
+    parser.add_argument(
+        "--task-network-version",
+        choices=TASK_NETWORK_VERSIONS,
+        default="role_v2",
+        help="DINOv3 role_v2 phân biệt query/context; legacy_v1 chỉ để đọc/tiếp tục run cũ",
     )
     parser.add_argument(
         "--no-amp",
@@ -1580,6 +1641,7 @@ def parse_args() -> ExperimentConfig:
         baseline=args.baseline,
         dataset=args.dataset,
         backbone=args.backbone,
+        task_network_version=args.task_network_version,
         pretrained_backbone=not args.no_pretrained_backbone,
         amp=not args.no_amp,
         resume=not args.no_resume,

@@ -4,6 +4,11 @@ Tái hiện và cải tiến **Task-Aligned Context Selection (TACS)** cho bài 
 
 TACS học cách chọn ảnh tham chiếu hữu ích cho ảnh truy vấn. Ảnh được chọn không nhất thiết giống ảnh truy vấn nhất, mà phải giúp mô hình downstream phân loại chính xác hơn.
 
+**Cập nhật 04/11/2026:** DINOv3 mặc định dùng `role_v2` để phân biệt query/context.
+Run mới lưu trong namespace `role_v2`; checkpoint cũ phải chọn `--task-network-version legacy_v1`.
+Xem [nguyên nhân, kiểm thử checkpoint và hướng dẫn pilot](docs/CONTEXT_ROLE_FIX.md).
+Bản sửa kiến trúc chưa phải bằng chứng tăng accuracy sau huấn luyện.
+
 ## Mục tiêu
 
 1. Xây dựng baseline không dùng context.

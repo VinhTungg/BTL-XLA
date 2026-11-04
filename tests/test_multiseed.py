@@ -36,6 +36,7 @@ def write_complete_run(
         "config": {
             "dataset": config.dataset,
             "backbone": config.backbone,
+            "task_network_version": config.task_network_version,
             "pretrained_backbone": config.pretrained_backbone,
             "seed": seed,
             "batch_size": config.batch_size,
@@ -80,6 +81,8 @@ class MultiSeedRunnerTest(unittest.TestCase):
         config = parse_args([])
         self.assertEqual(config.dataset, "cifar100")
         self.assertEqual(config.backbone, "dinov3_vits16")
+        self.assertEqual(config.task_network_version, "role_v2")
+        self.assertEqual(config.experiment_root, Path("outputs/cifar100/dinov3_vits16/role_v2"))
         self.assertEqual(config.seeds, (42, 43, 44))
         self.assertEqual(config.baselines, BASELINES)
         self.assertTrue(config.eval_test)
@@ -109,6 +112,7 @@ class MultiSeedRunnerTest(unittest.TestCase):
             Path("results/cifar10/tiny/seed_43/no_context/best_encoder.pt"),
         )
         self.assertIn("--dry-run", command)
+        self.assertEqual(command[command.index("--task-network-version") + 1], "role_v2")
         self.assertIn("--no-pretrained-backbone", command)
         accumulation_index = command.index("--gradient-accumulation-steps") + 1
         warmup_index = command.index("--warmup-epochs") + 1
@@ -177,6 +181,22 @@ class MultiSeedRunnerTest(unittest.TestCase):
             with csv_path.open(encoding="utf-8-sig", newline="") as handle:
                 self.assertEqual(next(csv.DictReader(handle))["baseline"], "no_context")
             self.assertIn("0.8000 ± 0.1000", markdown_path.read_text(encoding="utf-8"))
+
+    def test_old_metrics_only_complete_under_explicit_legacy_version(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = RunnerConfig(outputs_root=Path(temp_dir), task_network_version="legacy_v1")
+            self.assertEqual(config.experiment_root, Path(temp_dir) / "cifar100/dinov3_vits16")
+            write_complete_run(config, 44, "random")
+            path = config.run_dir(44, "random") / "metrics.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["config"].pop("task_network_version")
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertTrue(is_complete_run(config, 44, "random"))
+            payload["config"]["task_network_version"] = "role_v2"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            self.assertFalse(is_complete_run(config, 44, "random"))
+            with self.assertRaisesRegex(RuntimeError, "version mismatch"):
+                aggregate_metrics(config)
 
     @patch("tacs.multiseed.subprocess.run")
     def test_resume_skips_complete_run(self, subprocess_run) -> None:

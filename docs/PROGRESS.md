@@ -1,5 +1,17 @@
 # Tiến độ
 
+## Mốc cập nhật 04/11/2026: vai trò query/context DINOv3
+
+- Đã kiểm tra năm baseline seed 44 mới: test No-context 87,07%, Random 39,26%,
+  Similarity 75,36%, TACS 85,54%, Two-Stage 75,68%.
+- Đã sửa task network thành `role_v2`, thêm dấu nhận biết context và kiểm tra
+  gradient, bảo vệ resume/output giữa hai version, đồng bộ notebook.
+- 71/71 test đạt trên CPU, đã bật integration CIFAR thật và thử ngắt/resume DINOv3.
+- Kiểm chứng trên checkpoint Random cũ và ảnh CIFAR-100 thật: mất đối xứng
+  hoán đổi vai trò, nhánh query-only giữ nguyên. Xem [chi tiết](CONTEXT_ROLE_FIX.md).
+- Chưa train benchmark dài cho role_v2, chưa tuyên bố tăng accuracy hoặc
+  tái hiện đúng kiến trúc của tác giả. Tiếp theo: pilot đối chứng trên validation.
+
 ## Mốc cập nhật 30/10/2026: CIFAR-100/DINOv3
 
 - Đã thu thập TACS seed 42, 100 epoch, test accuracy 85,66%; xem

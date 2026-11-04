@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .device import configure_stdout
+from .model import TASK_NETWORK_VERSIONS
 from .train import METRICS_SCHEMA_VERSION
 
 
@@ -34,6 +35,7 @@ SUMMARY_METRICS = (
 class RunnerConfig:
     dataset: str = "cifar100"
     backbone: str = "dinov3_vits16"
+    task_network_version: str = "role_v2"
     seeds: tuple[int, ...] = DEFAULT_SEEDS
     baselines: tuple[str, ...] = BASELINES
     outputs_root: Path = Path("outputs")
@@ -59,6 +61,10 @@ class RunnerConfig:
     force: bool = False
     plan_only: bool = False
 
+    def __post_init__(self) -> None:
+        if self.task_network_version not in TASK_NETWORK_VERSIONS:
+            raise ValueError(f"Unsupported task_network_version: {self.task_network_version}")
+
     @property
     def configured_epochs(self) -> int:
         if self.epochs is not None:
@@ -77,7 +83,10 @@ class RunnerConfig:
 
     @property
     def experiment_root(self) -> Path:
-        return self.outputs_root / self.dataset / self.backbone
+        root = self.outputs_root / self.dataset / self.backbone
+        if self.backbone != "tiny" and self.task_network_version != "legacy_v1":
+            root = root / self.task_network_version
+        return root
 
     def seed_root(self, seed: int) -> Path:
         return self.experiment_root / f"seed_{seed}"
@@ -106,6 +115,8 @@ def build_train_command(config: RunnerConfig, seed: int, baseline: str) -> list[
         config.dataset,
         "--backbone",
         config.backbone,
+        "--task-network-version",
+        config.task_network_version,
         "--seed",
         str(seed),
         "--batch-size",
@@ -174,10 +185,15 @@ def is_complete_run(
     if payload is None:
         return False
     run_config = payload.get("config", {})
+    if not isinstance(run_config, dict):
+        return False
+    run_config = dict(run_config)
+    run_config.setdefault("task_network_version", "legacy_v1")
     recipe = payload.get("training_recipe", {})
     expected_config = {
         "dataset": config.dataset,
         "backbone": config.backbone,
+        "task_network_version": config.task_network_version,
         "pretrained_backbone": config.pretrained_backbone,
         "seed": seed,
         "batch_size": config.batch_size,
@@ -255,6 +271,11 @@ def aggregate_metrics(
             payload = load_metrics(metrics_path)
             if payload is None:
                 continue
+            run_config = payload.get("config", {})
+            if not isinstance(run_config, dict) or run_config.get(
+                "task_network_version", "legacy_v1"
+            ) != config.task_network_version:
+                raise RuntimeError(f"Task network version mismatch in {metrics_path}")
             values = metric_values(payload)
             runs.append(
                 {
@@ -292,6 +313,7 @@ def aggregate_metrics(
         "experiment": {
             "dataset": config.dataset,
             "backbone": config.backbone,
+            "task_network_version": config.task_network_version,
             "seeds": list(config.seeds),
             "baselines": list(ordered_baselines(config.baselines)),
             "split_file": str(config.resolved_split_file),
@@ -412,6 +434,7 @@ def parse_args(argv: Sequence[str] | None = None) -> RunnerConfig:
         "--backbone", choices=("tiny", "dinov3_vits16"), default="dinov3_vits16"
     )
     parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS))
+    parser.add_argument("--task-network-version", choices=TASK_NETWORK_VERSIONS, default="role_v2")
     parser.add_argument("--baselines", nargs="+", choices=BASELINES, default=list(BASELINES))
     parser.add_argument("--outputs-root", type=Path, default=Path("outputs"))
     parser.add_argument("--data-root", type=Path, default=Path("data"))
@@ -470,6 +493,7 @@ def parse_args(argv: Sequence[str] | None = None) -> RunnerConfig:
     return RunnerConfig(
         dataset=args.dataset,
         backbone=args.backbone,
+        task_network_version=args.task_network_version,
         seeds=tuple(args.seeds),
         baselines=tuple(args.baselines),
         outputs_root=args.outputs_root,
