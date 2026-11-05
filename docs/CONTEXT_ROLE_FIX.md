@@ -186,3 +186,11 @@ riêng mỗi baseline; report chung `selector_pilot_comparison.json` chỉ ghi
 khi cả ba run hoàn tất. Việc tạo notebook không có nghĩa đã chạy trên cloud.
 Giữ Version 1 Random để đối chiếu; không resume cosine 20 epoch thành
 benchmark 100 epoch. Trước benchmark cần kiểm tra nhiều seed và khóa recipe.
+
+Khởi chạy trên Kaggle ngày 05/11/2026 lúc 23:31 (Asia/Saigon): notebook
+`b23dccn227trnngdng/tacs-role-pilot-seed44`, **Version 2**, scriptVersionId
+`366021012`, Save & Run All, GPU T4 x2, Internet bật. Cell train được thay
+bằng `scripts/kaggle_selector_pilot_train.py`; giữ source bundle SHA256
+`2bb4f915aa30cbb43dbeed7f18c5b5ecbfbcccacba1916e127b8d5b7edcad4c9`.
+Đã thấy trạng thái Running; đây là xác nhận job đã được khởi chạy,
+không phải xác nhận train hoàn tất hoặc accuracy. Version 1 Random được giữ.
