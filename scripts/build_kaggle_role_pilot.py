@@ -1,13 +1,14 @@
 """Build a self-contained Kaggle notebook from the verified role_v2 source bundle."""
 
 import ast
+import argparse
 import base64
 import hashlib
 import json
 from pathlib import Path
 
 
-def main() -> None:
+def main(selector_pilot: bool = False) -> None:
     root = Path(__file__).resolve().parents[1]
     bundle = root / "artifacts/role_v2/TACS_Colab_Bundle.zip"
     raw = bundle.read_bytes()
@@ -92,11 +93,21 @@ report = {'seed': 44, 'pilot_epochs': 20, 'test_evaluated': False, 'runs': resul
 (OUTPUT_ROOT / 'pilot_comparison.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
 print('PILOT COMPLETE:', json.dumps(report, indent=2), flush=True)
 '''
+    if selector_pilot:
+        train = (root / 'scripts/kaggle_selector_pilot_train.py').read_text(encoding='utf-8')
     cells = [{"cell_type": "markdown", "metadata": {}, "source": [
         "# TACS Random role pilot — seed 44\n",
         "20 epoch/version, pretrained DINOv3, physical batch 4 × accumulation 16. "
         "Real CIFAR-100, validation only. Outputs remain separate from historical runs.\n",
         "Use GPU T4 x2, Internet on, and Save & Run All to preserve outputs.\n"]}]
+    if selector_pilot:
+        cells[0]['source'] = [
+            '# TACS selector pilot — role_v2, seed 44\n',
+            '20 epochs each: TACS on GPU 0; No-context then Two-Stage on GPU 1. '
+            'Physical batch 4 x accumulation 16, LR 1e-4, warm-up 5. '
+            'Real CIFAR-100, validation only; start from pretrained, not Random task weights.\n',
+            'Use GPU T4 x2, Internet on, Save & Run All. New output root; preserve Random Version 1.\n',
+        ]
     for code in (setup, data, train):
         ast.parse(code)
         cells.append({"cell_type": "code", "metadata": {}, "execution_count": None,
@@ -104,11 +115,14 @@ print('PILOT COMPLETE:', json.dumps(report, indent=2), flush=True)
     notebook = {"cells": cells, "metadata": {"kernelspec": {
         "display_name": "Python 3", "language": "python", "name": "python3"}},
         "nbformat": 4, "nbformat_minor": 5}
-    target = root / 'artifacts/role_v2/TACS_Kaggle_Role_Pilot.ipynb'
+    filename = 'TACS_Kaggle_Selector_Pilot.ipynb' if selector_pilot else 'TACS_Kaggle_Role_Pilot.ipynb'
+    target = root / 'artifacts/role_v2' / filename
     target.write_text(json.dumps(notebook, ensure_ascii=False, indent=1), encoding='utf-8')
     print(target)
     print('Bundle SHA256:', digest)
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--selector-pilot', action='store_true')
+    main(parser.parse_args().selector_pilot)

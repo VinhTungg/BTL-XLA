@@ -10,6 +10,32 @@ from pathlib import Path
 
 
 class KagglePilotNotebookTest(unittest.TestCase):
+    def test_selector_pilot_has_isolated_outputs_and_ordered_dependency(self):
+        root = Path(__file__).resolve().parents[1]
+        if not (root / 'artifacts/role_v2/TACS_Colab_Bundle.zip').is_file():
+            self.skipTest('Build the local source bundle first')
+        spec = importlib.util.spec_from_file_location(
+            'selector_pilot_builder', root / 'scripts/build_kaggle_role_pilot.py')
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.main(selector_pilot=True)
+        notebook = json.loads((root / 'artifacts/role_v2/TACS_Kaggle_Selector_Pilot.ipynb').read_text(encoding='utf-8'))
+        cells = [''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code']
+        self.assertEqual(len(cells), 3)
+        for cell in cells:
+            ast.parse(cell)
+        train = cells[-1]
+        self.assertIn("task_network_version='role_v2'", train)
+        self.assertIn("baselines=('no_context', 'tacs', 'two_stage')", train)
+        self.assertIn("run_baseline('no_context', gpu), run_baseline('two_stage', gpu)", train)
+        self.assertIn("is_complete_run(CONFIG, 44, 'no_context')", train)
+        self.assertIn('epochs=20, batch_size=4, gradient_accumulation_steps=16', train)
+        self.assertIn('lr=1e-4, warmup_epochs=5, num_workers=2, eval_test=False', train)
+        self.assertIn("/kaggle/working/TACS_selector_role_v2_pilot", train)
+        self.assertIn("torch.cuda.device_count() >= 2", train)
+        self.assertIn("for name in CONFIG.baselines", train)
+        self.assertNotIn('checkpoint_best.pt', train)  # No warm-start from Random task weights.
+
     def test_generator_embeds_verified_source_and_controlled_recipe(self):
         root = Path(__file__).resolve().parents[1]
         bundle_path = root / 'artifacts/role_v2/TACS_Colab_Bundle.zip'

@@ -153,8 +153,36 @@ checkpoint và `pilot_comparison.json` lưu trong
 `/kaggle/working/TACS_context_role_pilot`. Chỉ coi hoàn thành khi có dòng
 `PILOT COMPLETE` và cả hai run đủ 20 epoch.
 
-Trạng thái thao tác ngày 05/11: notebook Kaggle riêng đã tồn tại ở
-`b23dccn227trnngdng/tacs-role-pilot-seed44`, nhưng editor kẹt ở Loading,
-Import Notebook/Run All bị vô hiệu hóa sau cả lần reload. **Chưa nhập notebook
-mới lên cloud, chưa khởi chạy pilot**. Cần xử lý khả năng tải editor trước;
-không bấm Save & Run All với bản sao cũ còn cấu hình Similarity seed 42.
+## 8. Kết quả pilot Random — xác minh ngày 05/11/2026
+
+Kaggle `b23dccn227trnngdng/tacs-role-pilot-seed44`, Version 1,
+scriptVersionId `365804474`: thành công, 15418,2 giây, output hiển thị 1,57 GB.
+Đã đọc trực tiếp `TACS_context_role_pilot/pilot_comparison.json` trên Output:
+
+| Version | Epoch | Best validation | Final validation |
+|---|---:|---:|---:|
+| legacy_v1 | 20 | 37,28% | 36,30% |
+| role_v2 | 20 | 87,40% | 87,28% |
+
+Seed 44, `test_evaluated=false`. Chênh lệch best validation +50,12 điểm
+phần trăm. Đây là hiệu quả bản sửa triển khai trong pilot một seed,
+không phải cải tiến vượt paper hoặc kết quả test. Chưa xác nhận tải toàn bộ
+checkpoint về máy; artifacts gốc vẫn ở Kaggle Version 1.
+
+## 9. Pilot selector role_v2
+
+Sinh notebook bằng `python scripts/build_kaggle_role_pilot.py --selector-pilot`.
+File: `artifacts/role_v2/TACS_Kaggle_Selector_Pilot.ipynb`.
+Recipe giữ nguyên pilot Random; ba baseline No-context, TACS, Two-Stage,
+seed 44, 20 epoch, validation only. TACS chạy GPU 0, No-context rồi Two-Stage
+chạy GPU 1; nếu chỉ một GPU thì chạy tuần tự. Two-Stage chỉ bắt đầu sau khi
+No-context cùng pilot hoàn tất và cung cấp encoder có provenance hợp lệ.
+Không đổi nhãn encoder Random thành No-context, không warm-start task weights
+từ Random, không sửa thuật toán selector. Encoder truy xuất của No-context
+vẫn là pretrained frozen như phần 6, không gọi là fine-tuned encoder.
+
+Output mới `/kaggle/working/TACS_selector_role_v2_pilot`, có log và report
+riêng mỗi baseline; report chung `selector_pilot_comparison.json` chỉ ghi
+khi cả ba run hoàn tất. Việc tạo notebook không có nghĩa đã chạy trên cloud.
+Giữ Version 1 Random để đối chiếu; không resume cosine 20 epoch thành
+benchmark 100 epoch. Trước benchmark cần kiểm tra nhiều seed và khóa recipe.
