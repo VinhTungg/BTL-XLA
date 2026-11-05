@@ -136,3 +136,25 @@ Vì vậy không gọi Similarity hiện tại là `finetuned_similarity_legacy`
 chỉ vì checkpoint được đặt dưới thư mục No-context. Dependency đường dẫn
 No-context vẫn tồn tại; việc tách trực tiếp pretrained frozen encoder và
 audit protocol paper là nhiệm vụ khác, không bị âm thầm thay trong bản sửa này.
+
+## 7. Notebook Kaggle tự chứa source — 05/11/2026
+
+Chạy `python scripts/build_kaggle_role_pilot.py` sau khi tạo bundle tại
+`artifacts/role_v2/TACS_Colab_Bundle.zip`. Notebook sinh ra là
+`artifacts/role_v2/TACS_Kaggle_Role_Pilot.ipynb`, nhúng bundle có SHA256,
+không nhúng dữ liệu hoặc checkpoint. Trên Kaggle nhập bằng File → Import
+Notebook, bật Internet và GPU T4 x2, rồi Save Version → Save & Run All.
+
+Recipe riêng cho T4: Random, seed 44, 20 epoch mỗi version, batch vật lý 4,
+tích lũy 16 bước, LR 1e-4, warm-up 5; chỉ validation, không test. Khi có hai
+GPU thì mỗi version chạy trên một GPU; một GPU thì chạy tuần tự. Source mới
+được giải nén riêng, không phụ thuộc dataset source legacy. Logs, best/latest
+checkpoint và `pilot_comparison.json` lưu trong
+`/kaggle/working/TACS_context_role_pilot`. Chỉ coi hoàn thành khi có dòng
+`PILOT COMPLETE` và cả hai run đủ 20 epoch.
+
+Trạng thái thao tác ngày 05/11: notebook Kaggle riêng đã tồn tại ở
+`b23dccn227trnngdng/tacs-role-pilot-seed44`, nhưng editor kẹt ở Loading,
+Import Notebook/Run All bị vô hiệu hóa sau cả lần reload. **Chưa nhập notebook
+mới lên cloud, chưa khởi chạy pilot**. Cần xử lý khả năng tải editor trước;
+không bấm Save & Run All với bản sao cũ còn cấu hình Similarity seed 42.
