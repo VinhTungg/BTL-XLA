@@ -194,3 +194,27 @@ bằng `scripts/kaggle_selector_pilot_train.py`; giữ source bundle SHA256
 `2bb4f915aa30cbb43dbeed7f18c5b5ecbfbcccacba1916e127b8d5b7edcad4c9`.
 Đã thấy trạng thái Running; đây là xác nhận job đã được khởi chạy,
 không phải xác nhận train hoàn tất hoặc accuracy. Version 1 Random được giữ.
+
+## 10. Hoàn tất pilot selector và bước audit — 06/11/2026
+
+Đã kiểm tra Version 2 trên Kaggle: chạy thành công 37.759,1 giây (khoảng
+10 giờ 29 phút), 83 output files và log `SELECTOR PILOT COMPLETE`.
+Kết quả đọc từ output pilot, chưa tái tính bằng checkpoint tải về máy:
+
+| Baseline role_v2 | Epoch | Best validation | Final validation |
+|---|---:|---:|---:|
+| No-context | 20 | 87,54% | 87,52% |
+| TACS | 20 | 87,32% | 87,20% |
+| Two-Stage | 20 | 87,42% | 87,42% |
+
+Seed 44, cùng recipe pilot, không đánh giá test. Random role_v2 Version 1
+đạt best validation 87,40%. TACS thấp hơn No-context 0,22 điểm phần trăm,
+Two-Stage thấp hơn 0,12 điểm phần trăm: chưa có bằng chứng selector cải thiện
+accuracy, cũng chưa đủ để kết luận phương pháp kém hơn một cách có ý nghĩa
+thống kê. Không coi đây là kết quả tái hiện toàn bài báo.
+
+Bước tiếp theo là paired validation audit (cùng checkpoint/cùng query,
+chỉ thay cách cấp context), xem [SELECTOR_UTILITY_AUDIT.md](SELECTOR_UTILITY_AUDIT.md).
+Mã kiểm tra đã được thêm; chưa chạy trên checkpoint pilot thật vì tải output
+qua Brave bị chặn `ERR_BLOCKED_BY_CLIENT`. Giữ nguyên output cũ, chưa train
+thêm hoặc đánh giá test.
