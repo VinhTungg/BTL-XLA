@@ -57,11 +57,75 @@ def validate_provenance(payload: dict, metrics: dict, split_hash: str) -> Experi
     return cfg
 
 
+def cosine_rescore(query_embeddings, candidate_embeddings):
+    """Diagnostic only: rescore the same features, never mutate the selector.
+
+    Return float32 dot and cosine choices, controlling for AMP score rounding.
+    Features may originate in AMP; casting does not recover lost precision.
+    """
+    if candidate_embeddings.ndim not in (2, 3):
+        raise ValueError("Expected candidate embeddings [N,D] or [B,N,D]")
+    with torch.autocast(device_type=query_embeddings.device.type, enabled=False):
+        query, bank = query_embeddings.float(), candidate_embeddings.float()
+        if not bool(torch.isfinite(query).all() and torch.isfinite(bank).all()):
+            raise ValueError("Non-finite embeddings in cosine diagnostic")
+        if bool((query.norm(dim=-1) == 0).any() or (bank.norm(dim=-1) == 0).any()):
+            raise ValueError("Zero-norm embeddings have undefined cosine similarity")
+        if bank.ndim == 2:
+            dot = query @ bank.T
+            cosine = F.normalize(query, dim=-1) @ F.normalize(bank, dim=-1).T
+        else:
+            dot = torch.einsum("bd,bnd->bn", query, bank)
+            cosine = torch.einsum("bd,bnd->bn", F.normalize(query, dim=-1), F.normalize(bank, dim=-1))
+    return dot.argmax(-1), cosine.argmax(-1)
+
+
+def norm_diagnostics(norms, selected_positions, eligible_positions=None):
+    """Descriptive correlations; account for top-k exposure, not causation."""
+    norms = torch.as_tensor(norms, dtype=torch.float64).cpu()
+    chosen = torch.as_tensor(selected_positions, dtype=torch.long).cpu()
+    if norms.ndim != 1 or not len(norms) or not len(chosen) or not bool(torch.isfinite(norms).all()):
+        raise ValueError("Need finite norms and nonempty selections")
+    counts = torch.bincount(chosen, minlength=len(norms)).double()
+    if eligible_positions is None:
+        exposure = torch.full_like(norms, len(chosen))
+        eligible_mean = norms.mean().item()
+        percentile = torch.searchsorted(norms.sort().values, norms[chosen], right=True).double() / len(norms)
+    else:
+        eligible = torch.as_tensor(eligible_positions, dtype=torch.long).cpu()
+        if eligible.ndim != 2 or eligible.shape[0] != len(chosen):
+            raise ValueError("Eligible candidates must match query count")
+        if not bool((eligible == chosen[:, None]).any(dim=1).all()):
+            raise ValueError("Selected context is outside eligible top-k")
+        exposure = torch.bincount(eligible.flatten(), minlength=len(norms)).double()
+        eligible_norms = norms[eligible]
+        eligible_mean = eligible_norms.mean().item()
+        percentile = (eligible_norms <= norms[chosen, None]).double().mean(1)
+    def pearson(x, y):
+        x, y = x - x.mean(), y - y.mean()
+        denominator = x.norm() * y.norm()
+        return float((x * y).sum() / denominator) if denominator > 0 else None
+    exposed = exposure > 0
+    return {
+        "pool_norm_quantiles_min_p50_p90_p99_max": torch.quantile(norms, torch.tensor([0., .5, .9, .99, 1.], dtype=torch.float64)).tolist(),
+        "mean_selected_norm": norms[chosen].mean().item(),
+        "mean_uniform_eligible_norm": eligible_mean,
+        "mean_selected_norm_percentile_within_eligible": percentile.mean().item(),
+        "norm_vs_selection_count_pearson": pearson(norms, counts),
+        "norm_vs_selection_rate_given_exposure_pearson": pearson(norms[exposed], counts[exposed] / exposure[exposed]),
+        "exposed_candidates": int(exposed.sum()),
+        "warning": "Descriptive association, not proof that norm causes concentration; percentiles use fraction <= selected norm, including ties.",
+    }
+
+
 def summarize(rows: list[dict], random_trials: int) -> dict:
     if not rows or random_trials < 1:
         raise ValueError("Need validation rows and at least one random trial")
     n = len(rows)
-    strategies = ["selected", "no_context"] + [f"random_{i}" for i in range(random_trials)]
+    random_names = [f"random_{i}" for i in range(random_trials)]
+    extras = [name for name in ("selector_dot_fp32", "selector_cosine", "retrieval_top1")
+              if name + "_correct" in rows[0]]
+    strategies = ["selected", "no_context"] + random_names + extras
     summary = {}
     for name in strategies:
         summary[name] = {
@@ -69,10 +133,10 @@ def summarize(rows: list[dict], random_trials: int) -> dict:
             "mean_cross_entropy": sum(r[name + "_ce"] for r in rows) / n,
         }
     # Average random trials WITHIN each query before paired comparisons.
-    for reference in ("no_context", "random"):
+    for reference in ["no_context", "random", *extras]:
         accuracy_deltas, rewards = [], []
         for row in rows:
-            refs = ["no_context"] if reference == "no_context" else strategies[2:]
+            refs = random_names if reference == "random" else [reference]
             accuracy_deltas.append(row["selected_correct"] - sum(row[s + "_correct"] for s in refs) / len(refs))
             rewards.append(sum(row[s + "_ce"] for s in refs) / len(refs) - row["selected_ce"])
         summary["selected_vs_" + reference] = {
@@ -91,6 +155,15 @@ def summarize(rows: list[dict], random_trials: int) -> dict:
         "mean_policy_entropy": sum(r["policy_entropy"] for r in rows) / n,
         "mean_top1_probability": sum(r["top1_probability"] for r in rows) / n,
     }
+    for name in extras:
+        counts = Counter(r[name + "_pool_position"] for r in rows)
+        summary[name]["selection"] = {
+            "unique_contexts": len(counts),
+            "top1_share": counts.most_common(1)[0][1] / n,
+            "top10_share": sum(v for _, v in counts.most_common(10)) / n,
+            "same_as_original_selector_fraction": sum(r[name + "_pool_position"] == r["selected_pool_position"] for r in rows) / n,
+            "same_label_fraction": sum(r[name + "_label"] == r["target"] for r in rows) / n,
+        }
     return summary
 
 
@@ -149,9 +222,10 @@ def run(args) -> dict:
     del payload
     standard = None
     standard_hash = None
-    if cfg.baseline == "two_stage":
+    diagnostics = args.cosine_diagnostics
+    if cfg.baseline == "two_stage" or diagnostics:
         if args.standard_encoder is None:
-            raise ValueError("Two-Stage requires --standard-encoder from the SAME pilot's no_context run")
+            raise ValueError("Two-Stage/cosine diagnostic requires --standard-encoder from the SAME pilot's no_context run")
         cfg.standard_encoder_path = str(args.standard_encoder)
         standard, _, standard_hash = _load_standard_encoder(cfg, torch.device("cpu"), split_hash)
     manifest = {
@@ -165,6 +239,8 @@ def run(args) -> dict:
         "device": str(device), "amp": amp, "torch_version": str(torch.__version__),
         "batch_size": args.batch_size, "random_trials": args.random_trials,
         "test_evaluated": False, "weights_updated": False,
+        "cosine_diagnostics": diagnostics,
+        "diagnostic_scoring": "float32 rescoring of existing features; matmul precision high; frozen encoder cosine top-1" if diagnostics else None,
     }
     if args.check_only:
         return {**manifest, "status": "checkpoint_and_split_preflight_passed",
@@ -182,6 +258,7 @@ def run(args) -> dict:
         positions = torch.randperm(len(positions), generator=generator)[:args.max_queries].tolist()
     queries = Subset(real_data, [split.validation[i] for i in positions])
     topk = None
+    retrieval_top1 = None
     if standard is not None:
         print("[retrieval] Rebuilding standard-encoder bank in FP32 (same as trainer)", flush=True)
         standard.to(device)
@@ -190,9 +267,13 @@ def run(args) -> dict:
                                               torch.tensor([real_data.targets[i] for i in pool.indices]), pool)
         topk = TopKContextDataset(queries, pool, retriever, standard, device,
                                  args.batch_size, min(cfg.topk_candidates, len(pool))).cached_positions
+        retrieval_top1 = topk[:, 0].clone()
+        if cfg.baseline == "tacs":
+            topk = None  # Frozen retrieval is only an intervention, not a restriction on TACS.
         del standard, retriever, bank
     model.to(device).eval()
     bank = encode_bank(model.selector.encoder, pool, device, args.batch_size, amp, "selector bank").to(device)
+    bank_norms = bank.float().norm(dim=-1).cpu() if diagnostics else None
     candidate_count = len(pool) if topk is None else topk.shape[1]
     # Precompute each trial independently, so RNG does not depend on inference batch size.
     random_local = torch.stack([torch.randint(candidate_count, (len(queries),), generator=generator)
@@ -217,11 +298,25 @@ def run(args) -> dict:
                 probabilities = selection[0].float().softmax(-1)
                 entropy = -(probabilities * probabilities.clamp_min(1e-30).log()).sum(-1)
                 strategies = {"selected": selected, "no_context": None}
+                if diagnostics:
+                    dot_local, cosine_local = cosine_rescore(selection[2], candidate_bank)
+                    def pool_position(local):
+                        return local if local_topk is None else local_topk.gather(1, local[:, None]).squeeze(1)
+                    strategies["selector_dot_fp32"] = pool_position(dot_local)
+                    strategies["selector_cosine"] = pool_position(cosine_local)
+                    strategies["retrieval_top1"] = retrieval_top1[offset:offset + count].to(device)
                 for trial in range(args.random_trials):
                     local = random_local[offset:offset + count, trial].to(device)
                     strategies[f"random_{trial}"] = local if local_topk is None else local_topk.gather(1, local[:, None]).squeeze(1)
                 predictions = {}
                 for name, chosen in strategies.items():
+                    # Identical interventions in eval mode need only one forward.
+                    reused = next((prior for prior in predictions
+                                   if chosen is not None and strategies[prior] is not None
+                                   and torch.equal(chosen, strategies[prior])), None)
+                    if reused is not None:
+                        predictions[name] = predictions[reused]
+                        continue
                     context = None if chosen is None else _load_selected_context(pool, chosen, device)
                     logits = model.task_network(query, context)
                     if not bool(torch.isfinite(logits).all()):
@@ -239,6 +334,8 @@ def run(args) -> dict:
                     row[name + "_ce"] = float(loss[i])
                     if strategies[name] is not None:
                         row[name + "_pool_position"] = int(strategies[name][i])
+                        if diagnostics:
+                            row[name + "_label"] = real_data.targets[pool.indices[int(strategies[name][i])]]
                 rows.append(row)
                 output.write(json.dumps(row) + "\n")
             offset += count
@@ -260,6 +357,12 @@ def run(args) -> dict:
                               "Random is averaged across trials on the same queries, not extra independent queries.",
                               "No training-time gradient measurement. Concentration alone does not prove collapse.",
                               "Two-stage encoder schema/split checked; old metrics do not record its hash, so original identity needs artifact provenance."]}
+    if diagnostics:
+        report["norm_diagnostics"] = norm_diagnostics(bank_norms, [r["selected_pool_position"] for r in rows], topk)
+        report["cosine_norm_diagnostics"] = norm_diagnostics(bank_norms, [r["selector_cosine_pool_position"] for r in rows], topk)
+        (args.output / "candidate_norms.json").write_text(json.dumps({
+            "pool_cifar_indices": pool.indices, "selector_embedding_norms": bank_norms.tolist(),
+        }), encoding="utf-8")
     (args.output / "report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
 
@@ -280,6 +383,7 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--no-amp", action="store_true")
     parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--cosine-diagnostics", action="store_true", help="Add frozen cosine top-1, selector cosine/float32-dot interventions and norm diagnostics; requires --standard-encoder")
     parser.add_argument("--accuracy-tolerance", type=float, default=0.001, help="Fraction, not percent; default 0.1 percentage points")
     args = parser.parse_args()
     if args.max_queries < 0 or min(args.batch_size, args.threads, args.random_trials) < 1:

@@ -107,6 +107,9 @@ unit tests làm dữ liệu inference; audit trên CIFAR-100 thật tại `data/
 
 ## Trạng thái ngày 06/11/2026
 
+Phần này là nhật ký lịch sử trước khi nhận ZIP; blocker tải output đã được
+giải quyết ngày 07/11/2026 như phần trên.
+
 Đã viết công cụ `python -m tacs.selector_audit` và unit tests. **Chưa chạy
 audit trên checkpoint role_v2 thật**: chưa tải thành công output Kaggle.
 Brave chặn URL tải output Version 2 bằng `ERR_BLOCKED_BY_CLIENT`.
@@ -203,6 +206,42 @@ checkpoint đó. Không chọn cấu hình bằng test. Sau khi khóa phương p
 chạy benchmark công bằng và đánh giá test cuối cùng.
 
 ## Kiểm thử phần mềm
+
+### Mở rộng cosine và norm (chỉ inference)
+
+Thêm `--cosine-diagnostics` cùng `--standard-encoder` của No-context trong
+cùng pilot. Với TACS, encoder cố định chỉ tạo đối chứng; không thu hẹp pool
+9.000 ảnh của selector gốc. Với Two-Stage, giữ nguyên top-32 và chọn ảnh đầu
+tiên trong thứ tự cosine truy xuất làm đối chứng `retrieval_top1`.
+
+Ba can thiệp mới trên cùng task weights:
+
+- `retrieval_top1`: cosine top-1 từ encoder cố định, khác encoder selector.
+- `selector_cosine`: chuẩn hóa chính embedding selector rồi chọn cosine
+  cao nhất, trong cùng không gian ứng viên của selector gốc.
+- `selector_dot_fp32`: tính lại dot-product ở float32 để đối chiếu ảnh hưởng
+  làm tròn score AMP. Các embedding vẫn là embedding đã trích xuất theo AMP;
+  không gọi đây là toàn bộ pipeline FP32. CUDA matmul precision vẫn là `high`.
+
+Can thiệp không đổi loss, model, checkpoint hoặc recipe huấn luyện. Việc cosine
+có làm tăng accuracy hay không phải được đo, không giả định từ norm lớn.
+Report thêm norm quantiles, norm context được chọn, percentile norm trong tập
+ứng viên hợp lệ và tương quan với tần suất chọn. Với Two-Stage, báo thêm tương
+quan theo tỷ lệ chọn trên số lần candidate có mặt trong top-k để tránh bỏ qua
+khác biệt cơ hội được chọn. Các tương quan là mô tả, không chứng minh nhân quả.
+
+Ví dụ tái chạy (phải đặt output mới nếu thư mục này đã tồn tại):
+
+```powershell
+$pilotRoot = 'artifacts/role_v2/kaggle_v2/TACS_selector_role_v2_pilot/cifar100/dinov3_vits16/role_v2/seed_44'
+.\.venv\Scripts\python.exe -X utf8 -m tacs.selector_audit --checkpoint "$pilotRoot/tacs/checkpoint_best.pt" --standard-encoder "$pilotRoot/no_context/best_encoder.pt" --output artifacts/role_v2/audit_tacs_cosine_recheck --max-queries 0 --batch-size 4 --device cuda --cosine-diagnostics
+```
+
+Đổi checkpoint thành `two_stage/checkpoint_best.pt` và output riêng để kiểm tra
+Two-Stage. `candidate_norms.json` ghi norm của toàn bộ pool cùng chỉ số CIFAR
+gốc; `queries.jsonl` ghi context/dự đoán/loss của các can thiệp.
+
+### Unit tests
 
 ```powershell
 .\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -p test_selector_audit.py -v
