@@ -206,12 +206,17 @@ Artifacts:
 
 ## Kiểm tra gradient tiếp nối — 07/11/2026
 
-Đã hoàn tất probe task/policy gradient trên cùng 64 validation query ở cả hai
-checkpoint, với hai diagnostic loss scale 128 và 1024. Không đứt gradient ở
-những batch được đo; policy/task L2 sau tích lũy khoảng 32× ở TACS và 44× ở
-Two-Stage. Advantage chuẩn hóa theo batch 4 khác chuẩn hóa theo window 64 ở
-25/64 dấu trong mỗi run. Đây là đầu mối cho ablation, không phải bằng chứng
-đã tìm ra nguyên nhân duy nhất hoặc một cải tiến accuracy mới.
+Đã hoàn tất probe task/policy gradient ở audit seed 44, 45, 46, mỗi cửa sổ
+64 query, trên hai checkpoint training seed 44. Có 190 query ID duy nhất;
+đây không phải ba training seed độc lập. Scale 128 dùng cả ba cửa sổ, đối
+chứng scale 1024 chỉ dùng cửa sổ 44. Không đứt gradient ở 96 microbatch của
+sáu probe scale 128. Policy/task L2 sau tích lũy lần lượt 31,63 / 377,11 /
+28,67× ở TACS và 44,07 / 1709,35 / 197,14× ở Two-Stage. Tỷ lệ lớn có thể do
+task gradient rất nhỏ, chưa chứng minh nổ gradient. Cosine Two-Stage chuyển
+từ âm sang dương ở hai cửa sổ mới, nên không kết luận luôn đối hướng.
+Advantage chuẩn hóa batch 4 khác chuẩn hóa window 64 ở 20–25/64 dấu mỗi
+probe. Đây là đầu mối cho ablation, không phải bằng chứng đã tìm ra nguyên
+nhân duy nhất hoặc một cải tiến accuracy mới.
 Chi tiết, giới hạn precision, artifacts và nhiệm vụ tiếp theo tại
 [GRADIENT_AUDIT.md](GRADIENT_AUDIT.md). Không có optimizer step, không test,
 không thay checkpoint hoặc loss training mặc định.

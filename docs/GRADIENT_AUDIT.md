@@ -157,21 +157,82 @@ Artifact đối chứng:
 - `artifacts/role_v2/gradient_two_stage_window44_scale1024/report.json`, SHA256
   `5e77b42dcdbc8ace33572c48b7803d20d8f74ddd843f0bc345d901b89d3cac74`.
 
+### Lặp trên audit seed 45 và 46 — hoàn tất 07/11/2026
+
+Đã chạy thêm bốn probe ở scale 128, giữ nguyên hai checkpoint **training seed
+44** và toàn bộ protocol. Đây là ba cửa sổ validation trên mỗi checkpoint,
+**không phải ba lần huấn luyện với seed khác nhau**. Mỗi cửa sổ gồm 64 query;
+TACS và Two-Stage có cùng ID và thứ tự query trong từng cửa sổ.
+
+Ba cửa sổ có tổng cộng **190 query ID duy nhất**: 44/45 trùng ID 7525,
+45/46 trùng ID 33497, 44/46 không trùng. Gumbel seeds cũng có phần chồng lấn
+do công thức `audit_seed + 1000 + batch_index`: các dải 1044–1059,
+1045–1060, 1046–1061. Không coi đây là các lần lặp độc lập để kiểm định
+thống kê hoặc thay thế kết quả nhiều training seed.
+
+| Checkpoint | Audit seed | Task L2 | Policy L2 | Policy/task | Cosine task/policy | Batch đối hướng | Advantage đổi dấu |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| TACS | 44 | 0,056616 | 1,790876 | 31,63× | −0,1090 | 10/16 | 25/64 |
+| TACS | 45 | 0,004801 | 1,810359 | 377,11× | −0,4836 | 9/16 | 21/64 |
+| TACS | 46 | 0,071898 | 2,061469 | 28,67× | −0,1586 | 8/16 | 22/64 |
+| Two-Stage | 44 | 0,010021 | 0,441659 | 44,07× | −0,5894 | 5/16 | 25/64 |
+| Two-Stage | 45 | 0,000352 | 0,601661 | 1709,35× | +0,1870 | 6/16 | 20/64 |
+| Two-Stage | 46 | 0,003050 | 0,601243 | 197,14× | +0,1139 | 7/16 | 20/64 |
+
+L2 và cosine trong bảng đo **sau tích lũy 16 microbatch**, policy_weight=1.
+Advantage đổi dấu so chuẩn hóa theo microbatch 4 với chuẩn hóa giả định theo
+window 64; không phải gradient của một lần train bằng global batch 64.
+
+Quan sát policy norm lớn hơn task norm giữ ở cả sáu probe, nhưng tỷ lệ biến
+động mạnh. Đặc biệt tỷ lệ 1709,35× đi kèm task norm rất nhỏ (0,000352),
+không đủ để gọi là nổ gradient. TACS có cosine âm ở cả ba cửa sổ; Two-Stage
+có cosine dương ở hai cửa sổ mới. Vì vậy **không kết luận hai nhánh luôn
+đối hướng**, cũng không suy ra giảm policy weight chắc chắn tăng accuracy.
+
+Mean reward TACS theo cửa sổ 44/45/46 lần lượt là +0,013521 / −0,004748 /
++0,003619; Two-Stage là +0,007288 / +0,008484 / +0,012842. Đây là reward
+trên mẫu Gumbel trong probe, không phải accuracy mới hay đánh giá toàn validation.
+
+Đã kiểm tra sáu report `complete`, 96 microbatch, gradient encoder và score
+hữu hạn, cả hai nhánh encoder khác 0 ở mọi microbatch. Checkpoint SHA256
+hiện tại khớp report, state trước/sau không đổi, optimizer step bằng 0,
+không đánh giá test. Chín unit tests gradient audit được chạy lại và đạt.
+Đối chứng scale 1024 chỉ áp dụng cửa sổ 44; chưa lặp precision control cho
+45/46 và chưa kiểm tra toàn pipeline FP32.
+
+Artifact bổ sung (mỗi thư mục có manifest, 16 dòng batch và report):
+
+| Thư mục dưới `artifacts/role_v2/` | SHA256 của `report.json` |
+|---|---|
+| `gradient_tacs_window45` | `a17e9f955cb32727a9fa771eea1a5173e17bfa0183db66033b4aa51486087fe0` |
+| `gradient_two_stage_window45` | `00e19f12684484f2c6ed006be8799d94033d6210b1b2a680320f01ca2ab355b5` |
+| `gradient_tacs_window46` | `b706bbb1b44b30dc5eef9a2987059c085553b71e2484c67e4107e4890928027d` |
+| `gradient_two_stage_window46` | `d936339ad00735a78944b145eeaba43d72fa71e8dd9e120a99020b7bb72e43b6` |
+
+Tái chạy bằng lệnh ở phần Cách chạy, thêm `--seed 45` hoặc `--seed 46`
+và `--loss-scale 128`, luôn chọn thư mục output mới. Artifact lớn nằm ngoài
+Git; bảng hash này giữ dấu vết kết quả, không thay thế việc sao lưu artifact.
+
 ### Kết luận và nhiệm vụ kế tiếp
 
 Chưa tìm thấy bằng chứng nhánh selector bị đứt gradient. Đã xác định từ source
 rằng advantage được chuẩn hóa theo microbatch 4, không phải toàn window 64.
-Đã đo được policy gradient lớn hơn task gradient nhiều lần và có đối hướng
-trong window thăm dò. **Chưa chứng minh các yếu tố này là nguyên nhân duy nhất
+Đã đo được policy gradient lớn hơn task gradient nhiều lần ở cả ba cửa sổ
+trên mỗi checkpoint, nhưng hướng tương đối không ổn định ở Two-Stage.
+**Chưa chứng minh các yếu tố này là nguyên nhân duy nhất
 của accuracy hoặc rằng thay loss chắc chắn giúp tăng accuracy.**
 
 Thứ tự tiếp theo:
 
-1. Lặp probe trên các window audit seed 45, 46 (checkpoint training seed vẫn
-   44) để kiểm tra độ ổn định trước khi chốt giả thuyết.
-2. Nếu quan sát giữ, thiết kế ablation độc lập cho `policy_weight` 1,0 / 0,1 /
+1. **Đã hoàn tất** lặp probe trên các window audit seed 45, 46, checkpoint
+   training seed vẫn 44; kết quả và giới hạn ở bảng trên.
+2. Tiếp theo, thiết kế ablation độc lập cho `policy_weight` 1,0 / 0,1 /
    0,03; các giá trị nhỏ chỉ là ứng viên cần train/validation, chưa là cấu hình
    thắng. Không coi tỷ lệ gradient trên một window là công thức tìm lambda tối ưu.
+   Giữ cùng split, khởi tạo, số epoch, batch/accumulation, augmentation và
+   encoder truy xuất; output riêng từng cấu hình. Không so một run train mới
+   với checkpoint cũ như thể chỉ khác policy weight nếu ngân sách/khởi tạo
+   khác nhau. Chọn theo validation, lưu cả accuracy lẫn paired context utility.
 3. Tách riêng ablation chuẩn hóa advantage theo window 64 so với microbatch 4;
    cần giữ replay input/Gumbel nhất quán nếu tính lại theo hai lượt để tiết kiệm
    VRAM. Không thay đồng thời loss weight, cosine score và normalization rồi
