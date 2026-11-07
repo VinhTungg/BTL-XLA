@@ -105,7 +105,106 @@ Artifact local:
 Unit tests audit: 12/12 đạt trong lần kiểm tra này. Không dùng fixture của
 unit tests làm dữ liệu inference; audit trên CIFAR-100 thật tại `data/`.
 
-## Trạng thái ngày 06/11/2026
+## Audit cosine và norm — hoàn tất ngày 07/11/2026
+
+Source audit: commit `21ed393`. Hai lượt chạy đều hoàn thành trên 5.000 query,
+pool 9.000, batch 4, CUDA AMP, seed 44 và cùng checkpoint/encoder của lượt
+trước. Không train, không test, không cập nhật trọng số. 18 trường của các
+nhánh cũ trên từng query (ID, target, score entropy/probability, context,
+prediction, CE) khớp hoàn toàn với audit trước: 0 giá trị sai khác ở cả hai run.
+SHA256 checkpoint sau chạy không đổi; accuracy gốc vẫn tái lập đúng 87,32%
+và 87,42%. Thời gian TACS 488,25 giây, Two-Stage 568,51 giây.
+
+### Accuracy khi chỉ thay cách chọn context
+
+| Can thiệp, giữ nguyên task weights trong mỗi cột | TACS | Two-Stage |
+|---|---:|---:|
+| Selector gốc (dot-product, AMP) | 87,32% | 87,42% |
+| Dot-product tính lại float32 trên cùng embedding | 87,28% | 87,44% |
+| Cosine từ embedding selector đã học | 87,14% | 87,62% |
+| Cosine top-1 từ encoder truy xuất cố định | 87,16% | **87,66%** |
+| Random trung bình 3 lần | 87,30% | 87,54% |
+| Bỏ context trên cùng task weights | 87,26% | 86,90% |
+
+`selector_cosine` vẫn chọn trong cùng tập ứng viên của selector: toàn pool với
+TACS, cùng top-32 với Two-Stage. `retrieval_top1` dùng encoder cố định của
+No-context cùng pilot; đây **không phải một baseline Similarity được train
+độc lập**. Không đổi tên can thiệp này thành kết quả mô hình mới hoặc kết quả
+paper. Hàng bỏ context cũng không phải baseline No-context train độc lập.
+
+TACS: cosine selector làm đúng thêm 14 ảnh nhưng làm sai thêm 23 ảnh so với
+selector gốc, ròng −9 ảnh (−0,18 điểm %). Cosine encoder cố định ròng −8 ảnh
+(−0,16 điểm %). Vì vậy thay sang cosine lúc inference **không cải thiện**
+accuracy TACS ở checkpoint này; chưa kết luận về mô hình được train lại bằng
+cosine ngay từ đầu.
+
+Two-Stage: cosine selector đúng thêm 44 ảnh, sai thêm 34 ảnh, ròng +10 ảnh
+(+0,20 điểm %). Cosine encoder cố định đúng thêm 48 ảnh, sai thêm 36 ảnh,
+ròng +12 ảnh (+0,24 điểm %). Cross-entropy tương ứng: selector gốc 0,421209;
+cosine selector 0,420321; cosine encoder cố định 0,418678. Cosine encoder cố
+định cũng hơn random trung bình 0,12 điểm %, nhưng đây là một checkpoint/một
+seed, chưa có kết luận về độ ổn định hoặc ý nghĩa thống kê qua nhiều lần train.
+
+### Norm có liên quan đến việc chọn lặp không?
+
+Norm là độ dài vector embedding. Dot-product phụ thuộc cả norm và hướng;
+cosine chuẩn hóa norm để so hướng. Với một query cố định, norm query là hằng
+số đối với mọi candidate; bỏ norm candidate có thể thay đổi thứ hạng.
+
+| Chỉ số | TACS gốc | TACS cosine selector | Two-Stage gốc | Two-Stage cosine selector |
+|---|---:|---:|---:|---:|
+| Context khác nhau được chọn | 30 | 1.872 | 1.385 | 3.399 |
+| Tỷ lệ lượt chọn vào top-10 context phổ biến | 85,56% | 3,32% | 5,78% | 1,34% |
+| Norm trung bình context được chọn | 12,6542 | 11,6728 | 12,8506 | 12,6068 |
+| Percentile norm trung bình trong tập ứng viên hợp lệ | 84,67% | 49,10% | 95,93% | 51,77% |
+
+Norm trung bình khi chọn đều từ tập ứng viên: TACS 11,6897; Two-Stage 12,6048.
+Pearson giữa norm và số lượt chọn: TACS 0,0526, Two-Stage 0,3562; nếu điều chỉnh
+theo số lần candidate có mặt trong top-k, Two-Stage là 0,4091. Tương quan TACS
+trên toàn pool yếu, nên **không khẳng định norm là nguyên nhân duy nhất**.
+Can thiệp chuẩn hóa làm lựa chọn phân tán hơn rõ rệt, nhưng không tự động tạo
+context hữu ích hơn cho task network: accuracy TACS vẫn giảm.
+
+Cosine encoder cố định chọn context cùng nhãn ở 65,10% query trong cả hai run;
+cosine selector đạt 3,06% ở TACS và 46,00% ở Two-Stage. Cùng nhãn là thống kê
+mô tả, không phải mục tiêu bắt buộc của selector task-aligned và không được dùng
+trong quá trình chọn. Cùng một context retrieval có thể tác động khác nhau
+đến hai task network đã được train khác nhau.
+
+### Đối chứng sai khác precision
+
+Đổi dot-product sang float32 làm đổi context ở 19,68% query TACS và 9,68% query
+Two-Stage, nhưng chỉ đổi dự đoán lớp ở 8 và 9 ảnh tương ứng. Float32 vẫn chỉ
+chọn 26 context khác nhau ở TACS, top-10 chiếm 85,50% lượt. Vì vậy AMP rounding
+gây nhạy cảm lựa chọn, nhưng **không giải thích hết** hiện tượng tập trung.
+Đây là rescoring float32 của embedding hiện có, không phải re-encode toàn bộ
+ảnh bằng FP32; CUDA matmul precision `high` được giữ như trainer.
+
+### Quyết định sau audit
+
+1. Giữ nguyên bản tái hiện dot-product; không sửa mặc định sang cosine.
+2. Xác nhận đối chứng đơn giản frozen-cosine top-1 và biến thể cosine rerank
+   của Two-Stage bằng protocol train/eval công bằng, nhiều seed trước khi
+   tuyên bố cải thiện. Kết quả trên là inference ablation, không thay thế
+   một baseline train độc lập. Chọn cosine top-1 đơn thuần cũng không phải
+   đóng góp nghiên cứu mới của nhóm.
+3. Với TACS, điều tra tiếp reward/advantage và gradient của selector trên
+   batch thật trước khi tăng epoch hoặc đổi loss. Kiểm tra cả đường task-loss
+   qua proxy và policy loss; không tự gọi có lỗi gradient chỉ từ accuracy.
+4. Chỉ thiết kế/train pilot cải tiến sau khi có giả thuyết cụ thể. Không dùng
+   test để chọn hướng. Chưa tự khởi chạy job train nào trong bước này.
+
+Artifacts:
+
+- `artifacts/role_v2/audit_tacs_cosine_full/report.json`, SHA256
+  `ba013ec953bd7da07982262f65180669d1f38f2bb4036b77feff78cfe01d0f24`.
+- `artifacts/role_v2/audit_two_stage_cosine_full/report.json`, SHA256
+  `2d313322c3c9ef254d8b8298cefe60598dd9410c1bdccc43fa8133b5e6c025bb`.
+- Mỗi thư mục chứa `queries.jsonl`, `manifest.json`, `candidate_norms.json`.
+- 20/20 unit tests audit đạt, gồm kiểm tra điều chỉnh theo cơ hội xuất hiện
+  trong top-k và không tính các can thiệp mới vào random trung bình.
+
+## Trạng thái lịch sử ngày 06/11/2026
 
 Phần này là nhật ký lịch sử trước khi nhận ZIP; blocker tải output đã được
 giải quyết ngày 07/11/2026 như phần trên.

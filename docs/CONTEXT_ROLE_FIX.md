@@ -235,3 +235,21 @@ tập trung không đồng nghĩa toàn phân phối xác suất co về một �
 Chi tiết số liệu, hash artifact, giới hạn và bước điều tra tiếp tại
 [SELECTOR_UTILITY_AUDIT.md](SELECTOR_UTILITY_AUDIT.md). Đây là validation audit
 một seed của bản triển khai hiện tại, không phải bằng chứng vượt paper.
+
+## 12. Cosine và norm: không có bản sửa accuracy chung — 07/11/2026
+
+Đã kiểm tra thêm trên đủ 5.000 validation query, giữ nguyên task weights.
+Cosine từ selector làm TACS chọn 1.872 context thay vì 30, nhưng accuracy
+giảm 87,32% → 87,14%. Cosine encoder cố định đạt 87,16% trên task weights TACS.
+Do đó không đổi mặc định TACS sang cosine chỉ vì phân bố chọn bớt tập trung.
+
+Với task weights Two-Stage, cosine selector đạt 87,62%, cosine encoder cố
+định đạt 87,66%, so với selector gốc 87,42%. Lợi ích tốt nhất là 12 ảnh đúng
+ròng trên 5.000, cần xác nhận công bằng trên nhiều seed. Đây là can thiệp
+inference, không phải baseline mới train độc lập hoặc đóng góp nghiên cứu mới.
+
+Selector gốc ưu tiên context có norm cao trong tập ứng viên, đặc biệt ở
+Two-Stage; chuẩn hóa giảm xu hướng này nhưng chưa chứng minh norm là nguyên
+nhân duy nhất. Rescoring float32 vẫn tập trung mạnh ở TACS, nên không đổ lỗi
+toàn bộ cho AMP. Giữ nguyên checkpoint và thuật toán gốc; chưa train thêm.
+Số liệu, hash và protocol chi tiết ở [SELECTOR_UTILITY_AUDIT.md](SELECTOR_UTILITY_AUDIT.md).
