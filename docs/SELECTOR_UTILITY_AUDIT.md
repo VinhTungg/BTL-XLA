@@ -204,6 +204,18 @@ Artifacts:
 - 20/20 unit tests audit đạt, gồm kiểm tra điều chỉnh theo cơ hội xuất hiện
   trong top-k và không tính các can thiệp mới vào random trung bình.
 
+## Kiểm tra gradient tiếp nối — 07/11/2026
+
+Đã hoàn tất probe task/policy gradient trên cùng 64 validation query ở cả hai
+checkpoint, với hai diagnostic loss scale 128 và 1024. Không đứt gradient ở
+những batch được đo; policy/task L2 sau tích lũy khoảng 32× ở TACS và 44× ở
+Two-Stage. Advantage chuẩn hóa theo batch 4 khác chuẩn hóa theo window 64 ở
+25/64 dấu trong mỗi run. Đây là đầu mối cho ablation, không phải bằng chứng
+đã tìm ra nguyên nhân duy nhất hoặc một cải tiến accuracy mới.
+Chi tiết, giới hạn precision, artifacts và nhiệm vụ tiếp theo tại
+[GRADIENT_AUDIT.md](GRADIENT_AUDIT.md). Không có optimizer step, không test,
+không thay checkpoint hoặc loss training mặc định.
+
 ## Trạng thái lịch sử ngày 06/11/2026
 
 Phần này là nhật ký lịch sử trước khi nhận ZIP; blocker tải output đã được
