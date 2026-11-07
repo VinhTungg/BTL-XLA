@@ -218,3 +218,20 @@ chỉ thay cách cấp context), xem [SELECTOR_UTILITY_AUDIT.md](SELECTOR_UTILIT
 Mã kiểm tra đã được thêm; chưa chạy trên checkpoint pilot thật vì tải output
 qua Brave bị chặn `ERR_BLOCKED_BY_CLIENT`. Giữ nguyên output cũ, chưa train
 thêm hoặc đánh giá test.
+
+## 11. Đã thu output và audit full validation — 07/11/2026
+
+Đã nhận `results.zip`, giải nén output selector pilot vào
+`artifacts/role_v2/kaggle_v2/` và xác minh checkpoint/split/source. Chạy audit
+trên đủ 5.000 validation query tái lập đúng 87,32% TACS và 87,42% Two-Stage.
+Không train thêm, không đánh giá test, không sửa trọng số.
+
+Trên cùng task weights, TACS chỉ hơn bỏ context 0,06 điểm phần trăm; Two-Stage
+hơn 0,52 điểm phần trăm. So với random (3 trials/query), TACS hơn 0,02 điểm
+phần trăm, Two-Stage thấp hơn 0,12 điểm phần trăm. TACS chọn chỉ 30 context
+khác nhau trong pool 9.000 ảnh; chưa gọi đây là policy collapse vì argmax
+tập trung không đồng nghĩa toàn phân phối xác suất co về một điểm.
+
+Chi tiết số liệu, hash artifact, giới hạn và bước điều tra tiếp tại
+[SELECTOR_UTILITY_AUDIT.md](SELECTOR_UTILITY_AUDIT.md). Đây là validation audit
+một seed của bản triển khai hiện tại, không phải bằng chứng vượt paper.

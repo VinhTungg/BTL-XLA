@@ -1,5 +1,110 @@
 # Kiểm tra ích lợi thực tế của selector role_v2
 
+## Tiếp nhận output ngày 07/11/2026
+
+Đã nhận `results.zip` ở thư mục gốc, 2.649.484.182 byte, SHA256:
+`6ac6e4a0f510af5e1cd12abf83f927984fcb04919c5bb41e5f3c70536c57063b`.
+Đã kiểm tra đường dẫn archive, không cho path traversal/symlink, giải nén
+84 tệp vào `artifacts/role_v2/kaggle_v2/`; giữ nguyên ZIP và output legacy.
+Đây là output selector pilot (Version 2), không chứa Random Version 1.
+
+`selector_pilot_comparison.json` xác nhận seed 44, đủ ba run 20 epoch,
+`test_evaluated=false`. Best validation khớp kết quả đã đọc trên Kaggle:
+No-context 0,8754; TACS 0,8732; Two-Stage 0,8742.
+Split trong ZIP và split local cùng SHA256:
+`0559402db013819b631d1f2e9df39dbd14d191df52e45b29d1eb53a4b8a7d295`.
+Các số trên là số liệu trainer lưu, chưa phải kết quả paired audit.
+
+## Kết quả audit thật — hoàn tất ngày 07/11/2026
+
+Đã chạy trên **toàn bộ 5.000 ảnh validation**, cùng thứ tự query, toàn pool
+9.000 ảnh, batch 4, CUDA AMP trên RTX 3050 Laptop, audit seed 44, 3 random
+trials/query. Không train hoặc đánh giá test. Checkpoint TACS tốt nhất ở epoch
+19, Two-Stage ở epoch 20. Nạp strict thành công; SHA256 checkpoint sau audit
+không thay đổi. Hash `model.py`, `data.py`, `retrieval.py`, `train.py` local
+trùng source trong ZIP Kaggle.
+
+| Can thiệp trên cùng task weights | TACS | Two-Stage |
+|---|---:|---:|
+| Selector chọn context | **87,32%** | **87,42%** |
+| Random trial 0 | 87,20% | 87,46% |
+| Random trial 1 | 87,26% | 87,62% |
+| Random trial 2 | 87,44% | 87,54% |
+| Random trung bình 3 trials | 87,30% | 87,54% |
+| Bỏ context, giữ nguyên task weights | 87,26% | 86,90% |
+| Selector trừ random trung bình | +0,02 điểm % | −0,12 điểm % |
+| Selector trừ bỏ context | +0,06 điểm % | +0,52 điểm % |
+
+TACS random lấy từ toàn pool; Two-Stage random chỉ lấy trong cùng top-32 của
+từng query. Không so hai cột như thể chúng dùng cùng task weights. Hàng bỏ
+context **không phải baseline No-context train độc lập** (best validation của
+baseline độc lập trong pilot là 87,54%). Ba random trials không phải ba seed
+huấn luyện và không biến 5.000 query thành 15.000 mẫu độc lập.
+
+Accuracy selector của cả hai run **khớp chính xác** accuracy lưu trong
+checkpoint (delta = 0), không chỉ nằm trong tolerance 0,1 điểm phần trăm.
+Thời gian audit full: TACS 275,50 giây; Two-Stage 412,40 giây. Trước đó đã chạy
+TACS trên 256 query, 84,08 giây; dùng full validation trên đây cho kết luận.
+
+### Context có tác dụng đến mức nào?
+
+Với TACS, bỏ context làm đổi dự đoán 62/5.000 ảnh (1,24%). Context do selector
+chọn sửa đúng 26 ảnh nhưng làm sai thêm 23 ảnh: lợi ích ròng **3 ảnh**. Mean
+cross-entropy giảm 0,000971 so với bỏ context, nhưng tăng 0,000981 so với random
+trung bình. Chưa có bằng chứng lợi thế selector đáng kể/ổn định.
+
+Với Two-Stage, bỏ context làm đổi dự đoán 126/5.000 ảnh (2,52%). Context sửa
+đúng 59 ảnh, làm sai thêm 33 ảnh: lợi ích ròng **26 ảnh**. Mean cross-entropy
+giảm 0,007772 so với bỏ context, nhưng tăng 0,001209 so với random trong top-32.
+Context có ích trong phép can thiệp này; phần rerank bằng selector chưa vượt
+đối chứng random từ cùng tập truy xuất trên checkpoint đang xét.
+
+### Phân bố chọn context
+
+| Chỉ số trên 5.000 query | TACS | Two-Stage |
+|---|---:|---:|
+| Số context khác nhau được chọn | 30/9.000 | 1.385/9.000 |
+| Context được chọn nhiều nhất | 19,66% lượt | 0,78% lượt |
+| 10 context phổ biến nhất | 85,56% lượt | 5,78% lượt |
+| Context cùng nhãn với query | 1,26% | 45,92% |
+| Mean policy entropy | 7,158011 | 2,789374 |
+| Mean top-1 probability | 0,007954 | 0,172224 |
+
+TACS argmax tập trung mạnh vào một nhóm nhỏ context. Đây là dấu hiệu cần
+điều tra, **chưa đủ để khẳng định toàn bộ phân phối xác suất đã collapse**:
+entropy trung bình vẫn lớn, và top-1 probability trung bình chỉ khoảng 0,8%.
+Entropy hai cột có số candidate khác nhau (9.000 và 32), không so trực tiếp
+độ lớn như cùng không gian chọn. Context cùng nhãn là thống kê mô tả,
+không phải mục tiêu bắt buộc của TACS; nhãn không được dùng để chọn context.
+
+### Quyết định tiếp theo
+
+Chưa tăng epoch, chưa tuyên bố cải tiến vượt paper. Ưu tiên kiểm tra cosine
+top-1 trên cùng task weights để tách hiệu quả truy xuất khỏi hiệu quả rerank;
+đồng thời kiểm tra quan hệ norm embedding/score với tần suất chọn ở TACS.
+Nếu kiểm tra ủng hộ giả thuyết cụ thể mới thiết kế thay đổi selector/loss và
+train pilot đối chứng cùng recipe. Không âm thầm đổi raw dot-product của bản
+tái hiện gốc. Chỉ một seed huấn luyện nên chưa có kết luận nhiều seed hoặc
+kiểm định lợi thế của một phương pháp mới. Chưa đo gradient lúc train.
+
+Artifact local:
+
+- `artifacts/role_v2/audit_tacs_full/report.json`, SHA256
+  `a2b71d72ceb6512cac5b3dd76acf1de152274125ed1c4c1f7a8e236e6d4fa717`.
+- `artifacts/role_v2/audit_two_stage_full/report.json`, SHA256
+  `e27d90a5b22eb2ecc6bb37871325459d17e2de4b3e50ad93f330d9ec9eb8e06d`.
+- Mỗi thư mục có `manifest.json` và `queries.jsonl` (5.000 dòng), để kiểm tra
+  dự đoán và các cặp đúng/sai. Các artifact được giữ ngoài Git.
+- TACS checkpoint SHA256:
+  `800464d634a0b2c522220949c360b47f0a165c5a74f02b604472f052740d33ed`.
+- Two-Stage checkpoint SHA256:
+  `4b188f41df9fef4a38788147c36fc3fd8e5846972e8db4b6b1acd09ae18c49a0`.
+- Encoder No-context của cùng output Version 2:
+  `ed59d392f6e78e7faeb6ffd9b6421ddf864725b610f10d986a179f417d84ec64`.
+
+Unit tests audit: 12/12 đạt trong lần kiểm tra này. Không dùng fixture của
+unit tests làm dữ liệu inference; audit trên CIFAR-100 thật tại `data/`.
+
 ## Trạng thái ngày 06/11/2026
 
 Đã viết công cụ `python -m tacs.selector_audit` và unit tests. **Chưa chạy

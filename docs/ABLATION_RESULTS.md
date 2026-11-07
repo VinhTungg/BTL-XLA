@@ -1,5 +1,10 @@
 # Kết quả ablation TACS và Two-Stage
 
+> Đây là kết quả lịch sử trên CIFAR-10, không phải pilot CIFAR-100/DINOv3
+> role_v2 hiện tại. Xem [CONTEXT_ROLE_FIX.md](CONTEXT_ROLE_FIX.md) cho pilot
+> seed 44 và [SELECTOR_UTILITY_AUDIT.md](SELECTOR_UTILITY_AUDIT.md) cho kiểm tra
+> ích lợi context trên checkpoint tải từ Kaggle. Không gộp các protocol này.
+
 Ngày chạy: 2026-10-24. Tất cả thí nghiệm dùng CIFAR-10 thật, seed 42,
 batch size 64, CPU và cùng split 36.000/9.000/5.000/10.000.
 
