@@ -4,8 +4,9 @@
 
 Kiểm tra giảm trọng số policy loss có giúp selector chọn context hữu ích hơn
 hay không. Gradient audit gợi ý thử nghiệm này, **không chứng minh** giảm
-trọng số sẽ tăng accuracy. Bộ notebook đã được tạo; chưa chạy train cloud,
-chưa có kết quả accuracy cho các cấu hình mới.
+trọng số sẽ tăng accuracy. Bộ notebook đã được tạo. Ngày 08/11/2026 đã khởi
+chạy đối chứng Two-Stage weight 1,0 trên Kaggle (chi tiết bên dưới); chưa có
+kết quả accuracy hoàn tất cho các cấu hình mới.
 
 Thiết kế gồm TACS / Two-Stage × policy_weight 1,0 / 0,1 / 0,03. Mỗi notebook
 chỉ chạy một thí nghiệm, một GPU, không chạy cả sáu job liên tục. Nếu ngân
@@ -16,7 +17,7 @@ ba seed độc lập.
 
 ## Các yếu tố giữ cố định
 
-- CIFAR-100 thật; split `cifar100_seed42.json`; query_train 35.000,
+- CIFAR-100 thật; split `cifar100_seed42.json`; query_train 36.000,
   candidate_pool 9.000, validation 5.000. Không đánh giá test.
 - DINOv3 ViT-S/16 pretrained; task network `role_v2`; training seed 44.
 - 20 epoch, LR 1e-4, warm-up 5, weight decay 1e-4, min LR 0.
@@ -126,3 +127,27 @@ end-to-end trong runtime Kaggle. Source bundle SHA256 của bộ file đã tạo
 `e427116799fe9e98986c7109dffd6e2421209d4ac8d80fbf3c54f1c99111ecda`.
 Hai trường hợp biên chính: encoder sai hash phải dừng; resume từ manifest
 khác trọng số/source phải dừng mà không thay dữ liệu cũ.
+
+## Nhật ký khởi chạy cloud — 08/11/2026
+
+- Notebook riêng tư: [TACS Policy TwoStage w1 seed44](https://www.kaggle.com/code/b23dccn227trnngdng/tacs-policy-twostage-w1-seed44?scriptVersionId=366787768).
+- Version 1, scriptVersionId `366787768`, tên `TwoStage w1 seed44 20ep validation`.
+- Save & Run All lúc khoảng 09:38 giờ Việt Nam; Internet bật, GPU T4 x2 được
+  cấp nhưng notebook giới hạn dùng GPU 0. Quota UI trước khi chạy: còn 30 giờ.
+- Đính kèm output `TACS_Role_Pilot_seed44` làm input chỉ đọc, không ghi đè
+  notebook/output cũ. Không cần upload lại encoder local.
+- Log 18,2 giây xác minh source SHA256 đúng bundle ghi trên; log 29,0 giây
+  xác minh encoder SHA256 `ed59d392f6e78e7faeb6ffd9b6421ddf864725b610f10d986a179f417d84ec64`.
+- Log GPU: Tesla T4; môi trường quan sát torch `2.11.0+cu130`, torchvision
+  `0.26.0+cu130`, timm `1.0.30`. Các đối chứng tiếp theo cần kiểm tra cùng
+  môi trường, không lấy môi trường local thay thế cho môi trường cloud.
+- Log 200,6 giây: real data `36000 9000 5000`. Đã sửa lỗi tài liệu ghi
+  nhầm 35.000 query_train; split local cũng xác nhận 36.000. Không đổi split.
+- Log 213,0 giây: tạo cache candidate lần đầu; đây không phải lỗi dừng job.
+- Log 581,7 giây: `[TWO_STAGE] starting at epoch 1/20 on device 'cuda' with AMP FP16...`.
+- Output root: `/kaggle/working/policy_weight_two_stage_1p0_seed44`.
+
+Trạng thái cuối quan sát trong lần triển khai: **Running, đã vào vòng train**.
+Chưa xác nhận hoàn tất epoch 1 hay đủ 20 epoch; chưa có accuracy cuối, chưa
+thu checkpoint/output mới. Chỉ run weight 1,0 được khởi chạy; weight 0,1 và
+0,03 chưa chạy. Chờ marker complete và artifacts trước khi cập nhật kết quả.
