@@ -242,3 +242,7 @@ Thứ tự tiếp theo:
 
 Chưa thực hiện các bước train/ablation này. Mã được thêm chỉ phục vụ audit;
 `losses.py`, `model.py`, `train.py` không bị sửa trong nhiệm vụ này.
+
+Ngày 08/11/2026: đã chuẩn bị sáu notebook riêng cho ablation policy weight,
+chưa khởi chạy train cloud. Recipe, cách dùng encoder cũ đúng provenance,
+resume và tiêu chí thu kết quả tại [POLICY_WEIGHT_PILOT.md](POLICY_WEIGHT_PILOT.md).
