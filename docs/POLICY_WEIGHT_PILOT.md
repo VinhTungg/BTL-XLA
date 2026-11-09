@@ -197,3 +197,25 @@ thu checkpoint/output mới. Chỉ run weight 1,0 được khởi chạy; weight
 Tiếp theo: xác minh complete và thu toàn bộ output weight 0,1; sau đó chạy
 weight 0,03 theo cùng recipe, so manifest và paired selector utility trước
 khi kết luận. Không resume chéo giữa các trọng số.
+
+## Chuyển weight 0,03 sang Brave — 09/11/2026
+
+- Theo yêu cầu người dùng do tài khoản trên Edge hết giờ, tạo bản riêng trên
+  tài khoản `b23dccn227trnngdng` bằng Copy & edit từ đối chứng weight 0,1.
+  Không sửa hoặc xóa notebook/output trên Edge hay các lượt trước.
+- Xác minh trực tiếp weight 0,1 Version `367137294` đã successful sau
+  6 giờ 33 phút 38 giây, đủ epoch 20/20; report `status=complete`, best
+  validation **87,38%**, final validation **87,36%**. Chưa tải output về local.
+  Chênh best so với weight 1,0 chỉ 0,04 điểm phần trăm, chưa chứng minh cải tiến.
+- Notebook mới: [TwoStage w0p03 seed44](https://www.kaggle.com/code/b23dccn227trnngdng/tacs-policy-twostage-w0p03-seed44?scriptVersionId=367326145).
+  Version 1 `367326145`, Save & Run All, tên `TwoStage w0p03 seed44 20ep validation`.
+- Đã đặt `POLICY_WEIGHT=0.03`, `RESUME_FROM=None`, output riêng
+  `/kaggle/working/policy_weight_two_stage_0p03_seed44` và cập nhật markdown.
+  Giữ nguyên source bundle, seed 44, 20 epoch, validation-only; input
+  `TACS_Role_Pilot_seed44` cung cấp encoder gốc. Không resume từ weight 0,1.
+- Trước submit: GPU T4 x2, Internet on, UI pin environment 2026-11-03,
+  quota đã dùng 13:21 / 30 giờ. Source chỉ dùng GPU 0.
+- Trạng thái cuối quan sát: **Queued**, chưa có log xác minh source/encoder
+  trong runtime mới, chưa xác nhận vào epoch 1. Không gọi là train hoàn tất.
+- Bằng chứng: `artifacts/policy_weight_pilot/brave_w0p03_seed44_submitted.jpg`.
+  Theo dõi Logs của đúng version trên; không bấm Run All thêm để tránh job trùng.
