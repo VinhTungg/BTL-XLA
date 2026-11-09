@@ -5,8 +5,9 @@
 Kiểm tra giảm trọng số policy loss có giúp selector chọn context hữu ích hơn
 hay không. Gradient audit gợi ý thử nghiệm này, **không chứng minh** giảm
 trọng số sẽ tăng accuracy. Bộ notebook đã được tạo. Ngày 08/11/2026 đã khởi
-chạy đối chứng Two-Stage weight 1,0 trên Kaggle (chi tiết bên dưới); chưa có
-kết quả accuracy hoàn tất cho các cấu hình mới.
+chạy đối chứng Two-Stage weight 1,0 trên Kaggle. Ngày 09/11/2026 xác minh
+đối chứng hoàn tất 20 epoch, best/final validation accuracy 87,34%; đã khởi
+chạy weight 0,1 riêng biệt (chi tiết bên dưới). Weight 0,03 chưa chạy.
 
 Thiết kế gồm TACS / Two-Stage × policy_weight 1,0 / 0,1 / 0,03. Mỗi notebook
 chỉ chạy một thí nghiệm, một GPU, không chạy cả sáu job liên tục. Nếu ngân
@@ -151,3 +152,48 @@ Trạng thái cuối quan sát trong lần triển khai: **Running, đã vào v�
 Chưa xác nhận hoàn tất epoch 1 hay đủ 20 epoch; chưa có accuracy cuối, chưa
 thu checkpoint/output mới. Chỉ run weight 1,0 được khởi chạy; weight 0,1 và
 0,03 chưa chạy. Chờ marker complete và artifacts trước khi cập nhật kết quả.
+
+## Cập nhật xác minh và lượt tiếp theo — 09/11/2026
+
+### Two-Stage weight 1,0 hoàn tất
+
+- Kiểm tra trực tiếp Version 1 `366787768`: log `successful`, thời gian
+  6 giờ 47 phút 45 giây; đủ 20/20 epoch, marker `POLICY WEIGHT PILOT COMPLETE`.
+- Best/final validation accuracy: **87,34%**; `test_evaluated=false`.
+- Cell cuối kiểm tra hash checkpoint thành công. Output Kaggle có
+  `experiment_manifest.json`, `result.json`, `train.log`; chưa tải checkpoint
+  về local trong lần xác minh này.
+- Checkpoint SHA256:
+  `307fa8f7e6f1df9456179272d2911515e935ad617da9a5ff628f2a81a1fd1ae2`.
+- Metrics SHA256:
+  `98934eb0d6856df3aadf7aad608c9ea9c03939b886c9b3f589722d510818bd2c`.
+- Đây là đối chứng một seed trên validation, chưa chứng minh cải tiến và
+  không phải kết quả test cuối cùng.
+
+### Two-Stage weight 0,1 đã khởi chạy
+
+- Notebook riêng tư: [TACS Policy TwoStage w0p1 seed44](https://www.kaggle.com/code/b23dccn227trnngdng/tacs-policy-twostage-w0p1-seed44?scriptVersionId=367137294).
+- Version 1 `367137294`, tên `TwoStage w0p1 seed44 20ep validation`,
+  Save & Run All lúc 09:38 giờ Việt Nam ngày 09/11/2026.
+- Sao chép notebook đối chứng; thay mô tả, `POLICY_WEIGHT=0.1`, output và
+  đường dẫn ví dụ resume. Source bundle không đổi; `RESUME_FROM=None`.
+  Không nạp task/selector từ checkpoint weight 1,0; không sửa output cũ.
+- Output riêng: `/kaggle/working/policy_weight_two_stage_0p1_seed44`.
+- Input giữ `TACS_Role_Pilot_seed44`; Internet bật, GPU T4 x2 nhưng source
+  chỉ dùng GPU 0. UI quota trước khi chạy: đã dùng 06:47 / 30 giờ.
+- Editor hiển thị `Pin to original environment (2026-11-03)`; trang Logs
+  hiển thị `Latest Container Image`. Không coi hai nhãn UI là bằng chứng
+  môi trường hoàn toàn giống nhau. Log thực tế xác nhận torch `2.11.0+cu130`,
+  torchvision `0.26.0+cu130`, khớp đối chứng; cần so manifest đầy đủ sau run.
+- Log 14,7 giây xác minh source hash như trên; log 22,2 giây xác minh
+  encoder hash gốc và `Run: two_stage 0.1`; log 22,4 giây: `GPU: Tesla T4`.
+- Trạng thái cuối xác minh: **Running, đang tải CIFAR-100**. Chưa quan sát
+  epoch 1 hay accuracy mới; chưa được coi là hoàn tất train.
+- Ảnh bằng chứng: `artifacts/policy_weight_pilot/kaggle_w0p1_seed44_started.jpg`.
+- Thao tác Copy & edit mở tab mới, dẫn tới tạo thêm một bản nháp không dùng
+  tên `Fork of TACS Policy TwoStage w1 seed44 f4387c`. Không khởi chạy bản
+  nháp này; chỉ version `367137294` được Save & Run All.
+
+Tiếp theo: xác minh complete và thu toàn bộ output weight 0,1; sau đó chạy
+weight 0,03 theo cùng recipe, so manifest và paired selector utility trước
+khi kết luận. Không resume chéo giữa các trọng số.
