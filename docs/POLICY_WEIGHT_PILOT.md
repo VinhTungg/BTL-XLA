@@ -7,7 +7,9 @@ hay không. Gradient audit gợi ý thử nghiệm này, **không chứng minh**
 trọng số sẽ tăng accuracy. Bộ notebook đã được tạo. Ngày 08/11/2026 đã khởi
 chạy đối chứng Two-Stage weight 1,0 trên Kaggle. Ngày 09/11/2026 xác minh
 đối chứng hoàn tất 20 epoch, best/final validation accuracy 87,34%; đã khởi
-chạy weight 0,1 riêng biệt (chi tiết bên dưới). Weight 0,03 chưa chạy.
+chạy weight 0,1 riêng biệt (chi tiết bên dưới). Cập nhật 10/11/2026: cả ba
+trọng số Two-Stage đã có kết quả 20 epoch; weight 0,03 đã được tải về local.
+Các mục theo ngày bên dưới là lịch sử, không phải trạng thái hiện tại.
 
 Thiết kế gồm TACS / Two-Stage × policy_weight 1,0 / 0,1 / 0,03. Mỗi notebook
 chỉ chạy một thí nghiệm, một GPU, không chạy cả sáu job liên tục. Nếu ngân
@@ -219,3 +221,52 @@ khi kết luận. Không resume chéo giữa các trọng số.
   trong runtime mới, chưa xác nhận vào epoch 1. Không gọi là train hoàn tất.
 - Bằng chứng: `artifacts/policy_weight_pilot/brave_w0p03_seed44_submitted.jpg`.
   Theo dõi Logs của đúng version trên; không bấm Run All thêm để tránh job trùng.
+
+## Thu kết quả weight 0,03 — 10/11/2026
+
+Nguồn: archive người dùng tải về `results (1).zip` ở thư mục gốc dự án.
+Không suy ra Kaggle version ID từ tên notebook: archive không cung cấp ID
+đủ để gắn kết quả này với lượt submit/queued trước đó.
+
+`result.json` báo complete; `train.log` ghi epoch 1 đến 20 và Done.
+Config xác nhận Two-Stage, policy weight 0,03, seed 44, role_v2,
+20 epoch, batch 4 × accumulation 16, image size 256, AMP,
+LR 1e-4, warm-up 5, top-k 32, temperature 0,1; không đánh giá test.
+Manifest ghi torch 2.11.0+cu130, torchvision 0.26.0+cu130,
+timm 1.0.30, Tesla T4. Config có `resume=true`, nhưng log bắt đầu epoch 1;
+không được dùng cờ này một mình để kết luận có warm-start từ thí nghiệm khác.
+
+| Two-Stage policy weight | Best validation | Final validation | Bằng chứng |
+|---|---:|---:|---|
+| 1,0 | 87,34% | 87,34% | Xác minh Kaggle đã ghi ở trên |
+| 0,1 | 87,38% | 87,36% | Xác minh Kaggle đã ghi ở trên |
+| 0,03 | 87,28% | 87,28% | Archive local, result và log |
+
+Weight 0,03 thấp hơn 0,1 đúng 0,10 điểm phần trăm (5/5.000 ảnh),
+thấp hơn 1,0 đúng 0,06 điểm phần trăm (3/5.000 ảnh). Đây chỉ là chênh lệch
+một seed trên validation; chưa chứng minh có khác biệt ổn định hay cải tiến.
+Weight 0,1 hiện là ứng viên có best validation cao nhất, không phải kết luận
+selector tốt nhất. Không dùng các con số này làm test accuracy hoặc so trực tiếp
+với kết quả paper khác giao thức.
+
+Đã tính lại và xác nhận khớp SHA256 checkpoint best, metrics, encoder gốc
+và split trực tiếp từ archive. Metrics xác nhận executed_epochs=20,
+resumed_from_epoch=null: lượt này không tiếp tục từ epoch của checkpoint cũ.
+Chưa kiểm tra toàn bộ CRC archive hoặc nạp tensor checkpoint.
+
+Giải nén vào `artifacts/policy_weight_pilot/kaggle_w0p03_seed44` bị dừng vì
+`OSError: [Errno 28] No space left on device`. Thư mục này là bản giải nén
+**không đầy đủ**, không dùng để resume/audit. ZIP gốc không thay đổi.
+Lệnh dọn bản giải nén dở bị công cụ chặn; cần giải phóng dung lượng trước
+khi giải nén lại. Không đánh dấu artifact local đã sẵn sàng để inference.
+
+Checkpoint best SHA256 đã xác minh:
+`890966a5057a5ff143902069374cdcd86d93df6bfdb7341c667e0ce847f92fd5`.
+Metrics SHA256:
+`85b49d0b1e8de883559a62c01c5ab62052a568c5fcb6c7b6bc24c577bc3d6c6e`.
+
+Bước tiếp theo: thu đủ artifact weight 1,0 và 0,1 nếu chưa có local;
+đối chiếu manifest, chạy paired selector utility trên cùng validation
+(selected / random cùng top-k / no-context, cố định task weights), rồi
+mới quyết định cấu hình cho thí nghiệm nhiều seed. Không train lại weight
+0,03 chỉ vì accuracy thấp hơn 0,1 và chưa cần đánh giá test.
