@@ -305,3 +305,19 @@ Weight 0,03 chưa chứng minh cải thiện accuracy hay lợi thế rerank. Ch
 hash output và lệnh tái chạy: [POLICY_W003_SELECTOR_AUDIT.md](POLICY_W003_SELECTOR_AUDIT.md).
 20/20 unit test công cụ audit đạt. Tiếp theo thu artifact policy weight 1,0
 và 0,1 để audit cùng giao thức; chưa train thêm hoặc đánh giá test.
+
+### Đã nhận và audit weight 1,0 — 10/11/2026
+
+Archive `results (2).zip` đúng experiment policy_weight_two_stage_1p0_seed44;
+đã xác minh hash checkpoint/metrics. Config chỉ khác weight 0,03 ở
+policy_weight và output_dir; manifest khớp source, split, encoder, môi trường.
+Chỉ giải nén best checkpoint và các file metadata/log cần thiết để tiết kiệm ổ đĩa.
+
+Full audit 5.000 ảnh hoàn tất: selector 87,36%, random trung bình 87,30%,
+bỏ context trên cùng weights 87,06%. Tái lập lệch một ảnh đúng ròng so với
+checkpoint 87,34%, trong tolerance; hash checkpoint sau audit không đổi.
+Chi tiết và hash output: [POLICY_W1_SELECTOR_AUDIT.md](POLICY_W1_SELECTOR_AUDIT.md).
+
+Weight 1,0 hơn random nhẹ (+0,06 điểm %) nhưng chưa đủ kết luận ổn định.
+Weight 0,03 chưa cho thấy cải thiện. Còn cần artifact weight 0,1 để hoàn tất
+so sánh utility trước khi chọn cấu hình cho nhiều seed; không train/test thêm.
