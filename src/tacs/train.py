@@ -65,6 +65,7 @@ class ExperimentConfig:
     epochs: int | None = None
     batch_size: int = 64
     gradient_accumulation_steps: int = 1
+    advantage_scope: str = "microbatch"
     lr: float = 1e-3
     min_lr: float = 0.0
     warmup_epochs: int = 0
@@ -90,6 +91,10 @@ class ExperimentConfig:
 
     def __post_init__(self) -> None:
         self.dataset = normalize_cifar_name(self.dataset)
+        if self.advantage_scope not in {"microbatch", "effective_batch"}:
+            raise ValueError("advantage_scope must be microbatch or effective_batch")
+        if self.advantage_scope == "effective_batch" and self.baseline not in {"tacs", "two_stage"}:
+            raise ValueError("effective_batch advantage requires tacs/two_stage")
         if self.task_network_version not in TASK_NETWORK_VERSIONS:
             raise ValueError(f"Unsupported task_network_version: {self.task_network_version}")
         if self.backbone not in {"tiny", "dinov3_vits16"}:
@@ -713,6 +718,69 @@ def _load_selected_context(
     return torch.stack(images).to(device, non_blocking=True)
 
 
+def _forward_replay_batch(model, batch, loader, bank, device):
+    """Forward the same materialized query and pool indices on either pass."""
+    query, target, candidates = unpack_batch(batch)
+    query, target = query.to(device), target.to(device)
+    if bank is None:
+        return model(query, None if candidates is None else candidates.to(device)), target
+    embeddings = bank
+    if isinstance(batch, dict) and "candidate_positions" in batch:
+        embeddings = bank[batch["candidate_positions"].to(device)]
+    selection = model.selector.forward_embedding_bank(query, embeddings)
+    context = _load_selected_context(loader.dataset.candidate_dataset,
+                                    _selected_pool_positions(batch, selection[1]), device)
+    return model.forward_embedding_bank(query, embeddings, selected_context=context, selection=selection), target
+
+
+def _train_effective_epoch(model, loader, optimizer, criterion, device, scaler, amp, accumulation):
+    from itertools import islice
+    from .effective_batch import backward_effective_window
+    from .losses import TACSLoss
+    if accumulation < 1 or not isinstance(criterion, TACSLoss) or not isinstance(model, TACSModel):
+        raise ValueError("effective_batch requires positive accumulation, TACSModel and TACSLoss")
+    model.train()
+    started = time.perf_counter()
+    bank = _candidate_bank_for_loader(model, loader, device, amp_enabled=amp)
+    selection_time = time.perf_counter() - started
+    loop_started = time.perf_counter()
+    iterator = iter(loader)
+    total = correct = steps = 0
+    loss_sum = task_sum = policy_sum = replay_delta = 0.
+    while batches := list(islice(iterator, accumulation)):
+        optimizer.zero_grad(set_to_none=True)
+        try:
+            result = backward_effective_window(
+                model, batches, lambda batch: _forward_replay_batch(model, batch, loader, bank, device),
+                criterion, lambda: _autocast_context(device, amp), scaler)
+        except Exception:
+            optimizer.zero_grad(set_to_none=True)
+            raise
+        if scaler is not None and scaler.is_enabled():
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+        steps += 1
+        total += result['samples']
+        correct += result['correct']
+        loss_sum += result['loss_sum']
+        task_sum += result['task_loss_sum']
+        policy_sum += result['policy_loss_sum']
+        replay_delta = max(replay_delta, result['replay_max_reward_delta'])
+        if steps == 1 or steps % 25 == 0:
+            print(f"[effective-batch] step={steps} samples={total} reward_std={result['reward_std']:.6g} replay_delta={replay_delta:.3g}", flush=True)
+    model_time = time.perf_counter() - loop_started
+    elapsed = model_time + selection_time
+    return dict(loss=round(loss_sum / max(1, total), 4), accuracy=round(correct / max(1, total), 4),
+                throughput=round(total / max(1e-5, elapsed), 2), time=round(elapsed, 2),
+                end_to_end_time_s=elapsed, model_time_s=model_time, selection_precompute_time_s=selection_time,
+                latency_ms_per_query=elapsed * 1000 / max(1, total), optimizer_steps=steps,
+                task_loss=task_sum / max(1, total), policy_loss=policy_sum / max(1, total),
+                replay_max_reward_delta=replay_delta)
+
+
 def _train_one_epoch_impl(
     model: nn.Module,
     loader: DataLoader,
@@ -722,8 +790,14 @@ def _train_one_epoch_impl(
     scaler: torch.amp.GradScaler | None = None,
     amp_enabled: bool = False,
     gradient_accumulation_steps: int = 1,
+    advantage_scope: str = "microbatch",
 ) -> dict[str, float]:
     """Huấn luyện 1 epoch."""
+    if advantage_scope == "effective_batch":
+        return _train_effective_epoch(model, loader, optimizer, criterion, device,
+                                      scaler, amp_enabled, gradient_accumulation_steps)
+    if advantage_scope != "microbatch":
+        raise ValueError("Unknown advantage_scope")
     model.train()
     selection_started_at = time.perf_counter()
     candidate_bank = _candidate_bank_for_loader(
@@ -840,6 +914,7 @@ def train_one_epoch(
     scaler: torch.amp.GradScaler | None = None,
     amp_enabled: bool = False,
     gradient_accumulation_steps: int = 1,
+    advantage_scope: str = "microbatch",
 ) -> dict[str, float | None]:
     """Train one epoch and include peak process/CUDA memory."""
     with PeakMemoryMonitor(device) as memory_monitor:
@@ -852,6 +927,7 @@ def train_one_epoch(
             scaler=scaler,
             amp_enabled=amp_enabled,
             gradient_accumulation_steps=gradient_accumulation_steps,
+            advantage_scope=advantage_scope,
         )
     return {**result, **memory_monitor.result().as_dict()}
 
@@ -1006,10 +1082,12 @@ RESUME_CONFIG_KEYS = (
     "min_lr",
     "weight_decay",
     "gradient_accumulation_steps",
+    "batch_size",
     "warmup_epochs",
     "topk_candidates",
     "selector_temperature",
     "policy_weight",
+    "advantage_scope",
 )
 
 
@@ -1038,6 +1116,7 @@ def _restore_training_checkpoint(
         )
     checkpoint_config = dict(checkpoint_config)
     checkpoint_config.setdefault("task_network_version", "legacy_v1")
+    checkpoint_config.setdefault("advantage_scope", "microbatch")
     current_config = asdict(config)
     mismatches = [
         key
@@ -1114,6 +1193,8 @@ def _validate_output_architecture(config: ExperimentConfig) -> None:
     if not isinstance(previous_config, dict):
         raise RuntimeError(f"Missing/invalid existing config in {out_dir}; use another output directory.")
     previous_version = previous_config.get("task_network_version", "legacy_v1")
+    if previous_config.get("advantage_scope", "microbatch") != config.advantage_scope:
+        raise RuntimeError("Output belongs to a different advantage_scope; use another output directory")
     if previous_version != config.task_network_version:
         raise RuntimeError(
             f"Output {out_dir} belongs to task_network_version={previous_version}, "
@@ -1173,11 +1254,8 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             task_network=task_network,
         ).to(device)
 
-        def tacs_criterion(outputs, targets):
-            from .losses import TACSLoss
-            return TACSLoss(policy_weight=config.policy_weight)(outputs, targets)
-
-        criterion = tacs_criterion
+        from .losses import TACSLoss
+        criterion = TACSLoss(policy_weight=config.policy_weight)
     else:
         model = BaselineModel(
             num_classes=config.num_classes,
@@ -1248,6 +1326,7 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             scaler=scaler,
             amp_enabled=amp_enabled,
             gradient_accumulation_steps=config.gradient_accumulation_steps,
+            advantage_scope=config.advantage_scope,
         )
         val_res = evaluate(
             model,
@@ -1265,6 +1344,10 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             "learning_rate": learning_rate,
             "next_learning_rate": next_learning_rate,
             "train_loss": train_res["loss"],
+            "advantage_scope": config.advantage_scope,
+            "train_task_loss": train_res.get("task_loss"),
+            "train_policy_loss": train_res.get("policy_loss"),
+            "replay_max_reward_delta": train_res.get("replay_max_reward_delta"),
             "train_acc": train_res["accuracy"],
             "val_loss": val_res["loss"],
             "val_acc": val_res["accuracy"],
@@ -1466,6 +1549,10 @@ def run_experiment(config: ExperimentConfig) -> dict[str, Any]:
             "effective_batch_size": (
                 config.batch_size * config.gradient_accumulation_steps
             ),
+            "advantage_scope": config.advantage_scope,
+            "advantage_batch_size": (config.batch_size * config.gradient_accumulation_steps
+                                     if config.advantage_scope == "effective_batch" else config.batch_size),
+            "effective_batch_replay": config.advantage_scope == "effective_batch",
             "configured_epochs": config.epochs,
             "executed_epochs": epochs,
             "amp_enabled": amp_enabled,
@@ -1551,6 +1638,7 @@ def parse_args() -> ExperimentConfig:
         help="Số epochs (mặc định: tiny=5, DINOv3=100 theo paper)",
     )
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
+    parser.add_argument("--advantage-scope", choices=["microbatch", "effective_batch"], default="microbatch")
     parser.add_argument(
         "--gradient-accumulation-steps",
         type=int,
@@ -1648,6 +1736,7 @@ def parse_args() -> ExperimentConfig:
         epochs=args.epochs,
         batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
+        advantage_scope=args.advantage_scope,
         lr=args.lr,
         min_lr=args.min_lr,
         warmup_epochs=args.warmup_epochs,

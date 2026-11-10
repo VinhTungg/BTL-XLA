@@ -22,11 +22,21 @@ class TACSLoss(nn.Module):
         self.policy_weight = policy_weight
         self.eps = eps
 
-    def forward(self, output: TACSOutput, targets: Tensor) -> TACSLossOutput:
+    @staticmethod
+    def rewards(output: TACSOutput, targets: Tensor) -> Tensor:
+        return (F.cross_entropy(output.no_context_logits, targets, reduction="none")
+                - F.cross_entropy(output.context_logits, targets, reduction="none")).detach()
+
+    def forward(self, output: TACSOutput, targets: Tensor,
+                advantage: Tensor | None = None) -> TACSLossOutput:
         context_loss = F.cross_entropy(output.context_logits, targets, reduction="none")
         no_context_loss = F.cross_entropy(output.no_context_logits, targets, reduction="none")
         reward = (no_context_loss - context_loss).detach()
-        advantage = (reward - reward.mean()) / (reward.std(unbiased=False) + self.eps)
+        if advantage is None:
+            advantage = (reward - reward.mean()) / (reward.std(unbiased=False) + self.eps)
+        elif (advantage.shape != reward.shape or advantage.requires_grad
+              or not bool(advantage.isfinite().all())):
+            raise ValueError("External advantage must be finite, detached and match targets")
         chosen_log_probability = (
             # Hard Gumbel-Max samples from softmax(scores); temperature only
             # controls the straight-through relaxation gradient.
