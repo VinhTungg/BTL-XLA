@@ -291,3 +291,17 @@ tiếp epoch 21. Có thể chạy 256 query validation để kiểm tra pipeline
 sau đó toàn bộ 5.000 query với cùng cấu hình giữa các trọng số. Môi trường
 local torch 2.14.1+cu126 khác môi trường train 2.11.0+cu130; phải ghi nhận
 khác biệt và kiểm tra tái lập accuracy trước khi diễn giải kết quả audit.
+
+### Paired utility đã hoàn tất — 10/11/2026
+
+Đã chạy kiểm tra 256 query, sau đó toàn bộ 5.000 query validation trên RTX
+3050, batch 4, AMP, audit seed 44, random 3 trials trong cùng top-32.
+Full audit hoàn tất 391,91 giây: selector 87,30%, random trung bình 87,42%,
+bỏ context với cùng task weights 87,36%. Accuracy lệch checkpoint một ảnh
+đúng ròng (+0,02 điểm phần trăm), trong tolerance 0,1 điểm phần trăm nhưng
+không khớp tuyệt đối. Checkpoint sau chạy có hash không thay đổi.
+
+Weight 0,03 chưa chứng minh cải thiện accuracy hay lợi thế rerank. Chi tiết,
+hash output và lệnh tái chạy: [POLICY_W003_SELECTOR_AUDIT.md](POLICY_W003_SELECTOR_AUDIT.md).
+20/20 unit test công cụ audit đạt. Tiếp theo thu artifact policy weight 1,0
+và 0,1 để audit cùng giao thức; chưa train thêm hoặc đánh giá test.
