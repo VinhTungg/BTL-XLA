@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from tacs.effective_batch import backward_effective_window, capture_rng, restore_rng
 from tacs.losses import TACSLoss
 from tacs.model import TACSOutput, TACSModel
-from tacs.train import ExperimentConfig, _validate_output_architecture, train_one_epoch
+from tacs.train import ExperimentConfig, _validate_output_architecture, _restore_training_checkpoint, train_one_epoch
 
 
 class Fixture(nn.Module):
@@ -121,6 +121,23 @@ class EffectiveBatchTest(unittest.TestCase):
             new = ExperimentConfig(baseline='tacs', output_dir=temp, advantage_scope='effective_batch')
             with self.assertRaisesRegex(RuntimeError, 'advantage_scope'):
                 _validate_output_architecture(new)
+
+    def test_resume_rejects_scope_change_before_mutating_model(self):
+        from dataclasses import asdict
+        with tempfile.TemporaryDirectory() as temp:
+            model = nn.Linear(2, 2)
+            optimizer = torch.optim.SGD(model.parameters(), lr=.1)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 2)
+            old = asdict(ExperimentConfig(baseline='tacs'))
+            old.pop('advantage_scope')  # Old checkpoint schema is microbatch.
+            path = Path(temp)/'checkpoint.pt'
+            torch.save(dict(config=old), path)
+            before = model.weight.detach().clone()
+            with self.assertRaisesRegex(RuntimeError, 'advantage_scope'):
+                _restore_training_checkpoint(path, model, optimizer, scheduler,
+                    torch.amp.GradScaler('cuda', enabled=False),
+                    ExperimentConfig(baseline='tacs', advantage_scope='effective_batch'), torch.device('cpu'))
+            torch.testing.assert_close(before, model.weight)
 
 
 if __name__ == '__main__':
