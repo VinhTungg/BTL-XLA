@@ -349,3 +349,21 @@ Chi tiết, hash report, lệnh chạy lại và kiểm tra 20/20 unit tests:
 [POLICY_W01_SELECTOR_AUDIT.md](POLICY_W01_SELECTOR_AUDIT.md).
 Pilot ba weight đã hoàn tất; bước tiếp theo cần quyết định giả thuyết cải tiến
 hoặc kế hoạch xác nhận nhiều seed, không tiếp tục quét weight tùy ý.
+
+### Trạng thái lưu trữ local — 11/11/2026
+
+Khi chuẩn bị chuyển archive sang C, kiểm tra thấy cả ba `results*.zip` không
+còn ở gốc dự án; ổ D trống 5.265.473.536 byte. Chưa xác định archive đã
+được người dùng chuyển đi hay xóa. Agent không thực hiện chuyển/xóa ZIP,
+không tạo `C:\TACS_Archives`, không xác nhận có bản sao lưu ở vị trí mới.
+
+Tính lại SHA256 best checkpoint của cả ba weight từ đường dẫn trong report:
+đều khớp report. Các artifact audit vẫn còn. Local weight 0,03 có cả latest;
+weight 1,0 và 0,1 chỉ được giải nén best, không có latest ở thư mục tiếp nhận.
+Do đó đủ best checkpoint để đánh giá/demo (cùng source, data, split và encoder),
+nhưng không tuyên bố có đủ trạng thái để resume chính xác hai lượt 1,0/0,1.
+Nếu cần resume, phải lấy lại latest từ archive/nguồn cloud đã được kiểm chứng.
+
+Thêm ignore riêng cho `/results*.zip`, `/*.crdownload`, `/cifar100/` để tránh
+đưa nhầm dữ liệu lớn vào Git. Không sửa lịch sử hoặc xóa Git objects;
+ignore không thu hồi dung lượng objects đã có và không phải bản sao lưu.

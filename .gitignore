@@ -13,3 +13,8 @@ tmp/
 .vscode/
 .agents/
 artifacts/
+
+# Downloaded experiment archives and extracted training outputs
+/results*.zip
+/*.crdownload
+/cifar100/
