@@ -321,3 +321,31 @@ Chi tiết và hash output: [POLICY_W1_SELECTOR_AUDIT.md](POLICY_W1_SELECTOR_AUD
 Weight 1,0 hơn random nhẹ (+0,06 điểm %) nhưng chưa đủ kết luận ổn định.
 Weight 0,03 chưa cho thấy cải thiện. Còn cần artifact weight 0,1 để hoàn tất
 so sánh utility trước khi chọn cấu hình cho nhiều seed; không train/test thêm.
+
+### Hoàn tất ba trọng số Two-Stage — 11/11/2026
+
+Đã nhận weight 0,1 trong `results (1).zip` mới (1.284.366.504 byte).
+Tên ZIP này không còn chỉ artifact weight 0,03 như ở lần tiếp nhận trước;
+checkpoint/metadata weight 0,03 và report đã giải nén vẫn giữ riêng.
+Đã xác minh hash, source và manifest, config chỉ khác weight/output.
+
+Lượt audit đầu weight 0,1 hết dung lượng trước inference query; output
+`audit_w0p1_seed44_full` không hợp lệ. Sau khi người dùng dọn tải dở,
+retry `audit_w0p1_seed44_full_retry` hoàn tất 5.000 ảnh, 527,55 giây,
+checkpoint best epoch 17; accuracy khớp checkpoint 87,38% tuyệt đối.
+
+| Full validation audit | Weight 1,0 | Weight 0,1 | Weight 0,03 |
+|---|---:|---:|---:|
+| Selector | 87,36% | 87,38% | 87,30% |
+| Random trung bình, cùng top-32 | 87,30% | 87,426667% | 87,42% |
+| Bỏ context, cùng weights từng run | 87,06% | 87,14% | 87,36% |
+
+Random contexts/query order khớp cả ba audit; mỗi cột là model train riêng.
+Giảm policy weight chưa cho thấy cải thiện ổn định: 0,1 có accuracy cao nhất
+nhưng chưa hơn random; 0,03 thấp hơn cả random và bỏ context về accuracy.
+Không kết luận khác biệt có ý nghĩa từ một seed hoặc tăng epoch/test tự động.
+
+Chi tiết, hash report, lệnh chạy lại và kiểm tra 20/20 unit tests:
+[POLICY_W01_SELECTOR_AUDIT.md](POLICY_W01_SELECTOR_AUDIT.md).
+Pilot ba weight đã hoàn tất; bước tiếp theo cần quyết định giả thuyết cải tiến
+hoặc kế hoạch xác nhận nhiều seed, không tiếp tục quét weight tùy ý.
