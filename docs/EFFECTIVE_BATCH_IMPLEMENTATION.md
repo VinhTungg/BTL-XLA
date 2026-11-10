@@ -43,3 +43,18 @@ external advantage sai shape/có gradient, replay sai, output scope guard.
 Giữ batch query, augmentation, action noise, initialization, số epoch và
 scheduler cố định giữa hai nhánh pilot. Không so run mới với pilot khác
 source như thể chỉ khác normalization. Chỉ mở test sau khi khóa phương pháp.
+
+## Kiểm chứng DINOv3/CIFAR-100 thật
+
+Script `scripts/verify_effective_batch_real.py` đã chạy một bước optimizer
+trong bộ nhớ, 64 query train thật, microbatch 4 × 16, shortlist thử nghiệm
+32 ảnh thật từ candidate pool. Dùng bản sao trong RAM của checkpoint weight
+1,0; không lưu trọng số sau bước thử và hash checkpoint gốc không đổi.
+Replay reward delta lớn nhất bằng 0; gradient hữu hạn, L2 khoảng 7,4077;
+VRAM allocated đỉnh 1.307,6 MiB, reserved 1.368 MiB. Report:
+`artifacts/effective_batch_pilot/real_smoke_v2.json`.
+
+Đây là kiểm tra kỹ thuật với pool rút gọn, không phải train pilot đầy đủ,
+không đo accuracy cải tiến và không đại diện chi phí quét pool 9.000 ảnh.
+Full suite sau khi thêm demo/pilot/resume guards: 130 test, 0 lỗi, 2 integration
+test opt-in bỏ qua. Một smoke thực tế riêng đã chạy như mô tả trên.
