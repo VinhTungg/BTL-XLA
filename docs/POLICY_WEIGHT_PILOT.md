@@ -270,3 +270,24 @@ Bước tiếp theo: thu đủ artifact weight 1,0 và 0,1 nếu chưa có local
 (selected / random cùng top-k / no-context, cố định task weights), rồi
 mới quyết định cấu hình cho thí nghiệm nhiều seed. Không train lại weight
 0,03 chỉ vì accuracy thấp hơn 0,1 và chưa cần đánh giá test.
+
+### Khôi phục sau khi giải phóng dung lượng — 10/11/2026
+
+Người dùng đã giải phóng dung lượng; kiểm tra ổ D còn 8.422.510.592 byte
+trước giải nén. Đã giải nén đầy đủ experiment weight 0,03, encoder tham chiếu
+và split vào `artifacts/policy_weight_pilot/kaggle_w0p03_seed44`.
+Trạng thái bản giải nén không đầy đủ ở mục trước đã được khắc phục.
+Không giải nén lại bộ CIFAR hoặc source không cần thiết; không ghi đè ZIP.
+
+Tính lại hash từ file đã giải nén: checkpoint best, metrics, encoder tham
+chiếu và split đều khớp result/manifest. Chạy `tacs.selector_audit` với
+`--check-only --device cpu` thành công: `checkpoint_and_split_preflight_passed`.
+Checkpoint nạp bằng weights_only, model state nạp strict; checkpoint epoch 20,
+val_accuracy 0,8728; encoder và split tương thích. Không cập nhật weights,
+không inference dữ liệu và không đánh giá test trong bước này.
+
+Bước kế tiếp là paired utility audit trên dữ liệu thật, không phải train
+tiếp epoch 21. Có thể chạy 256 query validation để kiểm tra pipeline trước,
+sau đó toàn bộ 5.000 query với cùng cấu hình giữa các trọng số. Môi trường
+local torch 2.14.1+cu126 khác môi trường train 2.11.0+cu130; phải ghi nhận
+khác biệt và kiểm tra tái lập accuracy trước khi diễn giải kết quả audit.
