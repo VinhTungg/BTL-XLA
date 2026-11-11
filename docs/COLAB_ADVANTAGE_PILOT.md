@@ -114,3 +114,21 @@ Chưa mua gói hay thay đổi quyền extension. Cell1 đang chờ người dù
 ~80MB. Cell2 đã được yêu cầu chạy sau cell1; chưa quan sát log cài đặt hoặc
 `MATCHED ENVIRONMENT`. Chưa train. CUDA thực tế và tương thích cu130 còn phải
 kiểm tra sau input. Bằng chứng: `artifacts/effective_batch_pilot/colab_waiting_input.jpg`.
+
+## Setup lại trên tài khoản người dùng đang mở
+
+Theo yêu cầu mới, chuyển sang tài khoản đang mở (UI `Colab Pro home`), không
+tiếp tục notebook/Drive tài khoản miễn phí ở trên. Người dùng import cùng file
+notebook, tạo bản mới:
+https://colab.research.google.com/drive/1SrEvcDTYVQGUKhpRyl_s2befBZAdfqKo
+
+Đã xác nhận scope effective_batch, seed44, source SHA cũ, 7 code cell; runtime
+type chọn T4, Python3, Latest, không bật High-RAM. Không mua/nâng cấp gói.
+Brave ngắt kết nối hai lần trong quá trình cấp runtime; đã nối lại notebook
+đúng ID, không import lặp, không terminate phiên và không khởi chạy train lặp.
+
+Lần quan sát cuối runtime đã tới bước xin quyền `Permit this notebook to access
+your Google Drive files?`. Đã yêu cầu người dùng tự cấp quyền bằng đúng tài khoản
+đang chạy. **Chưa xác nhận mount Drive/input/môi trường/CUDA thực tế hoặc epoch
+train trên tài khoản này.** Không suy luận Pro đảm bảo đủ quota hay hoàn thành.
+Bằng chứng: `artifacts/effective_batch_pilot/colab_tung_drive_permission.jpg`.
