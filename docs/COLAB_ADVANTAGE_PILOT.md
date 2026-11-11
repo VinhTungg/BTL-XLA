@@ -98,3 +98,19 @@ Trạng thái: notebook đã import, **chưa mount Drive, chưa cài môi trư�
 upload input, chưa xác minh CUDA thực tế và chưa có epoch train**. Cần giải phóng
 phiên cũ an toàn rồi tiếp tục cell1. Không bấm Run all lặp khi runtime chưa có.
 Bằng chứng: `artifacts/effective_batch_pilot/colab_active_session_handoff.jpg`.
+
+### Kết nối runtime và Drive
+
+Người dùng đồng ý terminate `Unknown notebook`, nhưng lần kiểm tra sau danh sách
+đã báo `No active sessions`; agent không thực hiện terminate/xóa runtime nào.
+Kết nối lại và người dùng hoàn tất CAPTCHA mới. Runtime đã kết nối, status T4
+(Python3); người dùng hoàn tất cấp quyền Drive và output cell1 xác nhận
+`Mounted at /content/drive`.
+
+Resources hiển thị `You are not subscribed`, zero compute units, runtime có thể
+kéo dài tới5giờ tại mức sử dụng lúc kiểm tra. Đây không phải đảm bảo đủ20epoch.
+Chưa mua gói hay thay đổi quyền extension. Cell1 đang chờ người dùng chọn
+`TACS_Advantage_Colab_Inputs.zip` qua nút Choose Files; đã yêu cầu chọn đúng file
+~80MB. Cell2 đã được yêu cầu chạy sau cell1; chưa quan sát log cài đặt hoặc
+`MATCHED ENVIRONMENT`. Chưa train. CUDA thực tế và tương thích cu130 còn phải
+kiểm tra sau input. Bằng chứng: `artifacts/effective_batch_pilot/colab_waiting_input.jpg`.
