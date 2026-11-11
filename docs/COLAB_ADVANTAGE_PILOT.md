@@ -82,3 +82,19 @@ selected/random/no-context trên validation; không chọn cải tiến bằng t
 Hai tình huống biên bắt buộc: input encoder sai phải bị từ chối; output cũ khác
 manifest phải bị từ chối thay vì ghi đè/resume nhầm. Kiểm tra live setup còn phụ
 thuộc import, mount Drive và cấp phát runtime của người dùng.
+
+## Live setup sau import — 11/11/2026
+
+Người dùng đã import thành công notebook:
+https://colab.research.google.com/drive/1Joi1TEJ6cpStizwBVFyo61buS8BkQWk6
+
+Đã xác nhận title, scope effective_batch/seed44 và 7 code cell đúng bộ bàn giao.
+Chạy cell1 yêu cầu cấp runtime; người dùng hoàn tất CAPTCHA. Colab sau đó báo
+`Too many sessions`. Manage sessions hiển thị một GPU session `Unknown notebook`.
+Chưa terminate phiên đó vì chưa biết nội dung và dữ liệu tạm của nó; đã hỏi
+người dùng xác nhận trước hành động có thể làm mất trạng thái runtime.
+
+Trạng thái: notebook đã import, **chưa mount Drive, chưa cài môi trường, chưa
+upload input, chưa xác minh CUDA thực tế và chưa có epoch train**. Cần giải phóng
+phiên cũ an toàn rồi tiếp tục cell1. Không bấm Run all lặp khi runtime chưa có.
+Bằng chứng: `artifacts/effective_batch_pilot/colab_active_session_handoff.jpg`.
