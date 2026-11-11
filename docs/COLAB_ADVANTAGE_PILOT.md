@@ -161,3 +161,18 @@ Cell môi trường live đã cập nhật và xác minh bằng copy toàn bộ 
 so sánh đúng với builder. Monaco fill ban đầu giữ thừa đoạn cũ; đã thay toàn bộ
 bằng Select All + Paste và kiểm tra chỉ có một assignment `required`. Có thêm
 một cell chẩn đoán GPU chỉ đọc trên notebook live; không thay thuật toán.
+
+### Môi trường T4 đã xác minh, Drive còn chờ
+
+Sau cài đặt đã đọc trực tiếp `MATCHED ENVIRONMENT` với torch2.11.0+cu130,
+torchvision0.26.0+cu130, timm1.0.30, TeslaT4. Cell chẩn đoán xác nhận một GPU,
+CUDA availableTrue, driver580.82.07 hỗ trợCUDA13.0. Cellsource xác nhận đúng bundle.
+
+Mount Drive trên runtime mới báo `ValueError: mount failed`; vì cell1 dừng trước
+khai báo đường dẫn, cellconfig tiếp theo báo `PERSISTENT_OUTPUT is not defined`.
+Đây là lỗi mount/thứ tự cell, không phải lỗi thuật toán. Đã yêu cầu chạy lại cell1;
+Brave tiếp tục ngắt/nối lại nên lần quan sát cuối UI còn `Resuming execution`.
+Chưa xác minh mount lại thành công, encoder/input trên runtime mới, split tải
+xong hoặc epoch train. Không gọi setup/train hoàn tất. Cần người dùng giữ tab
+ổn định và hoàn tất cấp quyền Drive trên runtime hiện tại nếu Colab hỏi lại.
+Bằng chứng: `artifacts/effective_batch_pilot/colab_t4_environment_ready_drive_pending.jpg`.
