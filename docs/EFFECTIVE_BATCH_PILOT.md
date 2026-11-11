@@ -91,14 +91,37 @@ Version 1, run `368151716` đã **successful**, runtime `24658.1 s`
 Manifest khớp bundle/split/encoder đã định trước; không warm-start task/selector.
 Source-tree SHA256:
 `0b152ef319e324cb4af03de3875963b2458f6fff59d16604381b41495137efb0`.
-Hash **do báo cáo cloud cung cấp**, chưa đồng nghĩa đã kiểm tra file local:
+Hash do báo cáo cloud cung cấp, **đã đối chiếu file local thành công** sau khi
+tải đủ ZIP:
 
 - Best checkpoint: `fbc50a26867d321a32892f262a9d447f45e3be95dd0a3a345053cf04ee8425d8`.
 - Metrics: `45067f3951d47cf63f7d5647409eb446c42ed13358c20941c7ba2066f831d6e0`.
 
-Đã yêu cầu Download output qua UI; file tải tạm xuất hiện trong Downloads.
-Chưa gọi là đã thu hồi checkpoint cho tới khi ZIP tải đủ, đọc được và hash local
-khớp. Bằng chứng UI: `artifacts/effective_batch_pilot/kaggle_microbatch_complete.jpg`.
+Bằng chứng UI: `artifacts/effective_batch_pilot/kaggle_microbatch_complete.jpg`.
+
+### Thu hồi local đã xác minh — 11/11/2026
+
+- ZIP: `C:\Users\ADMIN\Downloads\results (3).zip`, 1.284.373.463 byte;
+  SHA256 `6567c1c1510efbb6bda9a345a16fb2e6f0a56a868818aa68b9416fb01c8ace19`.
+- Toàn bộ 55 entry trong ZIP vượt kiểm tra CRC (`ZipFile.testzip()`).
+- Giải nén riêng 9 file, 792.422.779 byte, tại
+  `artifacts/effective_batch_pilot/kaggle_microbatch_seed44/advantage_microbatch_seed44`.
+  Giữ nguyên ZIP; không ghi đè kết quả cũ, không sao chép lại dataset/source.
+- `compare_advantage_pilot.read_run(root, 'microbatch')` đạt: manifest/config/metrics
+  thống nhất, đúng scope, chưa đánh giá test, best checkpoint và metrics khớp hash.
+- Đọc cả best/latest bằng `torch.load(..., map_location='cpu', weights_only=True)`:
+  epoch20, config đúng, tensor trọng số hữu hạn; latest có đủ history1–20 khớp
+  metrics, optimizer/scheduler/scaler và trạng thái RNG CPU/CUDA. Đây là kiểm tra
+  cấu trúc resume, chưa thực hiện thêm một epoch để thử resume.
+- Latest SHA256:
+  `3c74fc201780c619e32344a630c912c10b58eec35fbda3a3d3c81e02d3bf3026`.
+- Best encoder đọc được. Reference encoder trong ZIP khớp hash chuẩn.
+  Source-tree khớp checkout hiện tại; split/bundle khớp định danh đã chốt.
+  Khi đối chiếu recipe Linux với Windows, chỉ chuẩn hóa dấu phân cách đường dẫn
+  ở bản config kỳ vọng; không sửa config hay checkpoint đã tải.
+- History xác nhận best/final validation87,92% tại epoch20, tổng thời gian
+  training trong metrics 23.324,09 giây (khác runtime toàn notebook vì có setup).
+  Không chạy train lại, không mở test, không coi đây là kết quả effective_batch.
 
 Quota sau lượt chạy hiển thị `26:42 / 30 hrs`, tương ứng còn khoảng 3 giờ 18 phút
 theo hạn mức đó. Draft session đang off; không khởi chạy lại microbatch và chưa
@@ -108,10 +131,9 @@ và resume cùng manifest trước khi submit.
 
 ### Bước tiếp theo
 
-1. Tải đủ output; giữ `advantage_microbatch_seed44` với manifest, result, log,
+1. **Đã hoàn thành:** tải và kiểm tra output microbatch; giữ manifest, result, log,
    `run/config.json`, `metrics.json`, best/latest checkpoint và best encoder.
-   Không xóa output cloud trước khi xác minh local.
-2. Kiểm tra hash, history1–20 và nội dung checkpoint. Không dùng ZIP đang tải dở.
+2. **Đã hoàn thành:** hash, history1–20 và cấu trúc checkpoint đã xác minh local.
 3. Chạy `Advantage_effective_batch_seed44.ipynb` từ **cùng bundle**, khởi tạo mới,
    output riêng. Không resume effective_batch từ checkpoint microbatch.
 4. Dùng comparator ở trên rồi audit selected/random/no-context trên validation
