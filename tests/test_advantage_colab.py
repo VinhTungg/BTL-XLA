@@ -3,6 +3,8 @@ import hashlib
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'scripts'))
@@ -33,6 +35,28 @@ class AdvantageColabTest(unittest.TestCase):
     def test_changed_source_refused(self):
         with self.assertRaisesRegex(ValueError, 'Source changed'):
             make_colab(b'not the matched control source')
+
+    def preflight_code(self):
+        code = ''.join(make_colab(bundle_source(ROOT))['cells'][2]['source'])
+        return code[:code.index('def install_live')]
+
+    def test_cpu_runtime_refused_before_install(self):
+        with mock.patch('shutil.which', return_value=None), mock.patch('subprocess.run') as run:
+            with self.assertRaisesRegex(RuntimeError, 'No NVIDIA runtime'):
+                exec(self.preflight_code(), {})
+            run.assert_not_called()
+
+    def test_wrong_gpu_refused_before_install(self):
+        with mock.patch('shutil.which', return_value='/usr/bin/nvidia-smi'), mock.patch(
+                'subprocess.run', return_value=SimpleNamespace(stdout='NVIDIA A100\n')):
+            with self.assertRaisesRegex(RuntimeError, 'Expected one Tesla T4'):
+                exec(self.preflight_code(), {})
+
+    def test_t4_preflight_passes(self):
+        with mock.patch('shutil.which', return_value='/usr/bin/nvidia-smi'), mock.patch(
+                'subprocess.run', return_value=SimpleNamespace(stdout='Tesla T4\n')) as run:
+            exec(self.preflight_code(), {})
+            self.assertEqual(run.call_args.args[0], ['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'])
 
 
 if __name__ == '__main__':

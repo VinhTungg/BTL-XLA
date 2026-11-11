@@ -132,3 +132,32 @@ your Google Drive files?`. Đã yêu cầu người dùng tự cấp quyền b�
 đang chạy. **Chưa xác nhận mount Drive/input/môi trường/CUDA thực tế hoặc epoch
 train trên tài khoản này.** Không suy luận Pro đảm bảo đủ quota hay hoàn thành.
 Bằng chứng: `artifacts/effective_batch_pilot/colab_tung_drive_permission.jpg`.
+
+## Tiếp tục setup — 12/11/2026
+
+Drive tài khoản hiện tại đã mount. Người dùng upload đúng gói input80.242.752byte;
+output cell1 xác nhận ghi vào `MyDrive/TACS_Advantage_Pilot/`. Không cần tải lại
+gói này sau khi thay runtime nếu mount lại đúng Drive.
+
+Lần kiểm tra môi trường đầu thất bại dù torch/torchvision/timm khớp. Chẩn đoán
+trực tiếp cho thấy `nvidia-smi: None`, CUDA availableFalse, device count0,
+`torch.cuda.init()` báo không có NVIDIA driver; Resources cũng hiển thị backend
+không có GPU. Tùy chọn notebook vẫn chọn T4, vì vậy chỉ nhìn tùy chọn T4 không đủ.
+Người dùng đã đồng ý ngắt/xóa runtime CPU để cấp T4 mới; runtime CPU đã ngắt,
+file/RAM tạm không được giữ, nhưng input trên Drive được giữ nguyên.
+
+Runtime mới hiển thị backendGPU và `T4 (Python3)`. Preflight `nvidia-smi` xác nhận
+Tesla T4 trước cài đặt. Đã quan sát pip cài thành công torch2.11.0+cu130,
+torchvision0.26.0+cu130; timm1.0.30 đang ở bước cài trong lần quan sát cuối trước
+kết nối Brave bị ngắt. Sau nối lại UI đang `Resuming execution`; chưa xác nhận
+`MATCHED ENVIRONMENT`, mount lại Drive, encoder/source/data hoặc epoch train.
+
+Builder/notebook Colab đã bổ sung fail-fast trước pip khi không có nvidia-smi
+hoặc GPU khác TeslaT4, và stream stdout/stderr của pip theo dòng để hiện tiến độ.
+11 unit tests `test_advantage*.py` đạt, bao gồm CPU/wrongGPU/T4preflight.
+Source bundle thuật toán, recipe và comparator không đổi.
+
+Cell môi trường live đã cập nhật và xác minh bằng copy toàn bộ nội dung editor
+so sánh đúng với builder. Monaco fill ban đầu giữ thừa đoạn cũ; đã thay toàn bộ
+bằng Select All + Paste và kiểm tra chỉ có một assignment `required`. Có thêm
+một cell chẩn đoán GPU chỉ đọc trên notebook live; không thay thuật toán.

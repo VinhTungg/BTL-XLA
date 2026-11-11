@@ -36,7 +36,22 @@ if not INPUT_ZIP.is_file():
     del uploaded
 print('Persistent experiment directory:', PERSISTENT_OUTPUT, flush=True)
 '''
-    packages = '''import subprocess, sys, importlib.metadata
+    packages = '''import subprocess, sys, importlib.metadata, shutil
+if not shutil.which('nvidia-smi'):
+    raise RuntimeError('No NVIDIA runtime attached. Select T4 and reconnect to a GPU runtime before installing packages.')
+gpu_probe = subprocess.run(['nvidia-smi', '--query-gpu=name', '--format=csv,noheader'],
+                           capture_output=True, text=True, check=True)
+if gpu_probe.stdout.strip() != 'Tesla T4':
+    raise RuntimeError(f'Expected one Tesla T4, got {gpu_probe.stdout.strip()!r}; no packages installed.')
+print('GPU PREFLIGHT:', gpu_probe.stdout.strip(), flush=True)
+def install_live(arguments):
+    print('Installing:', ' '.join(arguments), flush=True)
+    with subprocess.Popen([sys.executable, '-m', 'pip', 'install', *arguments],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1) as process:
+        for line in process.stdout:
+            print(line, end='', flush=True)
+        if process.wait() != 0:
+            raise RuntimeError(f'pip failed with exit code {process.returncode}; stop and inspect the log above')
 required = {'torch':'2.11.0+cu130', 'torchvision':'0.26.0+cu130', 'timm':'1.0.30'}
 def installed(name):
     try:
@@ -47,10 +62,10 @@ needs_torch = any(installed(k) != required[k] for k in ('torch','torchvision'))
 if needs_torch:
     if 'torch' in sys.modules or 'torchvision' in sys.modules:
         raise RuntimeError('Restart session before installing the pinned torch environment')
-    subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-cache-dir',
+    install_live(['--no-cache-dir',
         'torch==2.11.0', 'torchvision==0.26.0',
-        '--index-url', 'https://download.pytorch.org/whl/cu130'], check=True)
-subprocess.run([sys.executable, '-m', 'pip', 'install', 'timm==1.0.30', 'psutil>=5.9', 'setuptools>=68', 'wheel'], check=True)
+        '--index-url', 'https://download.pytorch.org/whl/cu130'])
+install_live(['timm==1.0.30', 'psutil>=5.9', 'setuptools>=68', 'wheel'])
 import torch, torchvision, timm
 actual = {'torch':str(torch.__version__), 'torchvision':str(torchvision.__version__), 'timm':str(timm.__version__)}
 if actual != required or not torch.cuda.is_available():
