@@ -176,3 +176,15 @@ Chưa xác minh mount lại thành công, encoder/input trên runtime mới, spl
 xong hoặc epoch train. Không gọi setup/train hoàn tất. Cần người dùng giữ tab
 ổn định và hoàn tất cấp quyền Drive trên runtime hiện tại nếu Colab hỏi lại.
 Bằng chứng: `artifacts/effective_batch_pilot/colab_t4_environment_ready_drive_pending.jpg`.
+
+## Hoàn thành và thu hồi local — 12/11/2026
+
+Người dùng đã hoàn tất mount/setup và training. Notebook hiển thị hoàn thành20epoch,
+`ADVANTAGE PILOT COMPLETE`, cell xác minh best hash đạt. Log resume sau8,9,14.
+Người dùng tải thư mục Drive thành
+`artifacts/advantage_effective_batch_seed44-20261112T142703Z-1-001.zip`.
+Đã kiểm tra CRC9entry, giải nén không ghi đè, xác minh checkpoint/metrics/manifest,
+so sánh đối chứng thành công. Best validation87,80%, final87,78%; chưa đánh giá test.
+Đây là trạng thái mới thay cho blocker Drive ở các mục lịch sử trên.
+Xem [EFFECTIVE_BATCH_SEED44_RESULTS.md](EFFECTIVE_BATCH_SEED44_RESULTS.md) cho
+hash, vị trí local, kết quả screening và bước audit inference còn lại.

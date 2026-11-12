@@ -139,3 +139,14 @@ và resume cùng manifest trước khi submit.
 4. Dùng comparator ở trên rồi audit selected/random/no-context trên validation
    của cả hai best checkpoint. Chưa có kết quả effective_batch nên chưa kết luận
    chuẩn hóa advantage cải thiện accuracy; không so hai nhánh bằng test.
+
+## Cập nhật nghiệm thu — 12/11/2026
+
+Các trạng thái chưa chạy/chưa có kết quả ở trên là lịch sử tại thời điểm ghi.
+Effective-batch đã hoàn thành20epoch trên Colab và tải về local; ZIP9entry CRC
+đạt, best/latest/encoder đọc được, history1–20 và hash/config/manifest đã xác minh.
+Comparator hai nhánh đạt; best validation87,80% (epoch17), final87,78%, thấp hơn
+best đối chứng0,12điểm phần trăm, không có bằng chứng tăng accuracy ở seed44.
+Hai best checkpoint đều vượt selector-audit preflight; chưa audit inference.
+Chi tiết provenance, hash, giới hạn resume và lệnh kiểm tra:
+[EFFECTIVE_BATCH_SEED44_RESULTS.md](EFFECTIVE_BATCH_SEED44_RESULTS.md).
