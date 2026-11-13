@@ -150,3 +150,11 @@ best đối chứng0,12điểm phần trăm, không có bằng chứng tăng acc
 Hai best checkpoint đều vượt selector-audit preflight; chưa audit inference.
 Chi tiết provenance, hash, giới hạn resume và lệnh kiểm tra:
 [EFFECTIVE_BATCH_SEED44_RESULTS.md](EFFECTIVE_BATCH_SEED44_RESULTS.md).
+
+### Full selector audit đã nghiệm thu — 14/11/2026
+
+Hai audit5.000query cùng thứ tự và random contexts, checkpoint/source experiment
+đúng định danh. Selected audit87,86% so87,82%; lợi ích so random nhỏ ở cả hai
+nhánh. Chưa chứng minh effective-batch tăng accuracy. Xem
+[EFFECTIVE_BATCH_SELECTOR_AUDIT.md](EFFECTIVE_BATCH_SELECTOR_AUDIT.md) cho
+paired counts, context usage, CE, sai lệch tái đo và quyết định tiếp theo.

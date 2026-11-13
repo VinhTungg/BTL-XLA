@@ -111,3 +111,14 @@ Preflight mẫu cho effective-batch (không tạo output và không inference):
 
 Trường hợp biên: hash artifact sai phải bị comparator từ chối; checkpoint khác
 split/reference encoder phải bị audit preflight từ chối, không ghi đè kết quả.
+
+## Cập nhật full selector audit — 14/11/2026
+
+Các dòng "chưa inference" ở trên mô tả trạng thái nghiệm thu ZIP ngày12/11.
+Người dùng đã chạy xong hai audit full5.000query. Đã xác minh lại per-query,
+nhãn thật, hashes, manifest và tính lại summary từ JSONL. Accuracy audit:
+microbatch87,86%, effective-batch87,82%; cả hai trong tolerance0,1điểm % của
+checkpoint nhưng không khớp tuyệt đối. Selector hơn random trung bình lần lượt
+0,166667 và0,10điểm %, hơn bỏ context0,38 và0,18điểm %. Chưa có bằng chứng
+effective-batch tăng accuracy; chưa đánh giá test hoặc train thêm.
+Chi tiết: [EFFECTIVE_BATCH_SELECTOR_AUDIT.md](EFFECTIVE_BATCH_SELECTOR_AUDIT.md).
