@@ -1,5 +1,10 @@
 # Demo TACS bằng checkpoint thật
 
+> Bản demo hiện hành từ14/11/2026 dùng các checkpoint advantage đã audit:
+> [SHOWCASE_GUIDE.md](SHOWCASE_GUIDE.md), lệnh `python -m tacs.showcase`.
+> Nội dung bên dưới được giữ cho demo policy-weight cũ; các ví dụ và trạng thái
+> thử nghiệm của nó không thay cho cặp checkpoint mới. Không mở dataset mới.
+
 ## Chạy trên Windows
 
 Từ thư mục gốc dự án:

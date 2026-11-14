@@ -309,6 +309,10 @@ Remove-Item Env:PYTHONPATH
 
 ## Tài liệu
 
+- [Demo offline CIFAR-100](docs/SHOWCASE_GUIDE.md): chạy
+  `.\.venv\Scripts\python.exe -X utf8 -m tacs.showcase`, chọn checkpoint đã audit,
+  xem query/context/top-5 và lưu bằng chứng JSON. Không train hoặc mở dataset mới.
+
 - [Kế hoạch tiếp theo từ tái hiện đến demo và bảo vệ](docs/ROADMAP_REPRODUCTION_TO_DEMO.md):
   kế hoạch hiện hành ngày 30/10/2026 cho CIFAR-100/DINOv3, gồm audit paper,
   protocol, train nhiều seed, cải tiến, ngân sách GPU, demo và phân công ba người.

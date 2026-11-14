@@ -22,4 +22,14 @@
 - Quyết định: Sau khi huấn luyện Baseline 1 (No-context), trích xuất trọng số của `TinyVisionEncoder` tại `outputs/no_context/best_encoder.pt` làm encoder chuẩn.
 - Lý do: Đảm bảo tính công bằng và nhất quán khi tiền tính toán embedding của Candidate Pool ($9.000$ mẫu) và tính toán Cosine Similarity cho Baseline 3, không bị data leakage sang test set.
 
+## ADR-005: Tập trung demo CIFAR-100, không mở dataset mới — 14/11/2026
+
+- Theo yêu cầu mới của người dùng, dừng kế hoạch mở rộng Caltech-101/Pets.
+  Không xóa dữ liệu, checkpoint hoặc kết quả CIFAR-100; không khởi chạy train thêm.
+- Hoàn thiện giao diện offline từ các checkpoint advantage seed44 đã audit,
+  mặc định microbatch; effective-batch là ablation chưa chứng minh tăng accuracy.
+- Tách presentation ở `src/tacs/showcase/`, giữ nguyên code/bundle training cũ.
+  Các can thiệp trong demo dùng cùng task weights, không giả làm baseline train riêng.
+- Hướng dẫn vận hành và kiểm thử tại [SHOWCASE_GUIDE.md](SHOWCASE_GUIDE.md).
+
 
