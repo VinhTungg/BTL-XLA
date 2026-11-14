@@ -2,8 +2,13 @@
 
 ## Phạm vi đã chốt — 14/11/2026
 
-Theo yêu cầu người dùng: tập trung demo, không mở Caltech-101/Pets hay train
-thêm. Giữ toàn bộ CIFAR-100/checkpoint/audit. Giao diện trình bày riêng ở
+Phạm vi hiện hành: giữ CIFAR-100 và **thêm Caltech-101 để demo ảnh rõ**; không
+thêm Oxford Pets. Agent đã hiểu nhầm "tập trung demo" là bỏ dataset mới, nay
+đã sửa theo ADR-006. **Hướng dẫn dưới đây chỉ áp dụng cho demo CIFAR-100 đã
+chạy được**, chưa phải demo Caltech-101. Kế hoạch bổ sung tại
+[CALTECH101_DEMO_PLAN.md](CALTECH101_DEMO_PLAN.md).
+
+Giữ toàn bộ CIFAR-100/checkpoint/audit. Giao diện trình bày riêng ở
 `src/tacs/showcase/`, tái sử dụng `DemoEngine`; không thay source train,
 thuật toán hoặc bundle đã dùng để so sánh microbatch/effective-batch.
 

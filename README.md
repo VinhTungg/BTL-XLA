@@ -311,7 +311,9 @@ Remove-Item Env:PYTHONPATH
 
 - [Demo offline CIFAR-100](docs/SHOWCASE_GUIDE.md): chạy
   `.\.venv\Scripts\python.exe -X utf8 -m tacs.showcase`, chọn checkpoint đã audit,
-  xem query/context/top-5 và lưu bằng chứng JSON. Không train hoặc mở dataset mới.
+  xem query/context/top-5 và lưu bằng chứng JSON. Lệnh này chỉ inference CIFAR-100.
+  [Caltech-101 cho demo ảnh rõ](docs/CALTECH101_DEMO_PLAN.md) là nhánh bổ sung
+  đang cần triển khai và train checkpoint riêng; chưa có trong demo hiện tại.
 
 - [Kế hoạch tiếp theo từ tái hiện đến demo và bảo vệ](docs/ROADMAP_REPRODUCTION_TO_DEMO.md):
   kế hoạch hiện hành ngày 30/10/2026 cho CIFAR-100/DINOv3, gồm audit paper,

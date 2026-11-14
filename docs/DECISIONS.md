@@ -24,6 +24,9 @@
 
 ## ADR-005: Tập trung demo CIFAR-100, không mở dataset mới — 14/11/2026
 
+**Đã bị thay thế bởi ADR-006.** Agent hiểu nhầm phạm vi người dùng; các dòng
+dưới giữ để truy vết, không phải quyết định hiện hành.
+
 - Theo yêu cầu mới của người dùng, dừng kế hoạch mở rộng Caltech-101/Pets.
   Không xóa dữ liệu, checkpoint hoặc kết quả CIFAR-100; không khởi chạy train thêm.
 - Hoàn thiện giao diện offline từ các checkpoint advantage seed44 đã audit,
@@ -31,5 +34,21 @@
 - Tách presentation ở `src/tacs/showcase/`, giữ nguyên code/bundle training cũ.
   Các can thiệp trong demo dùng cùng task weights, không giả làm baseline train riêng.
 - Hướng dẫn vận hành và kiểm thử tại [SHOWCASE_GUIDE.md](SHOWCASE_GUIDE.md).
+
+## ADR-006: Giữ CIFAR-100, thêm Caltech-101 để demo ảnh rõ — 14/11/2026
+
+- Người dùng làm rõ: vẫn thêm dataset vì muốn demo bằng ảnh nguồn rõ nét hơn;
+  "tập trung demo" không đồng nghĩa bỏ dataset mới. Bộ bổ sung đã chốt từ trước
+  là **Caltech-101**, không tự đổi sang Oxford Pets.
+- CIFAR-100/checkpoint/audit và demo đã làm được giữ nguyên, không train lại
+  CIFAR-100 hoặc ghi đè kết quả. Caltech-101 là nhánh riêng phục vụ demo.
+- Cần hỗ trợ loader/split/101 nhãn, checkpoint được huấn luyện riêng và lựa chọn
+  dataset trong GUI. Không dùng bộ phân loại CIFAR-100 để giả làm Caltech-101.
+- Tái sử dụng DINOv3 pretrained làm điểm khởi tạo; không resume epoch CIFAR.
+  Không tự mở thêm vòng quét policy-weight/effective-batch/cosine.
+- Trạng thái: demo CIFAR-100 đã chạy; Caltech-101 chưa có loader tích hợp,
+  checkpoint train hoặc demo đã nghiệm thu. Nơi chạy train mới cần chốt với
+  người dùng trước khi sử dụng một lượt GPU kéo dài.
+- Kế hoạch: [CALTECH101_DEMO_PLAN.md](CALTECH101_DEMO_PLAN.md).
 
 
