@@ -46,9 +46,23 @@ dưới giữ để truy vết, không phải quyết định hiện hành.
   dataset trong GUI. Không dùng bộ phân loại CIFAR-100 để giả làm Caltech-101.
 - Tái sử dụng DINOv3 pretrained làm điểm khởi tạo; không resume epoch CIFAR.
   Không tự mở thêm vòng quét policy-weight/effective-batch/cosine.
-- Trạng thái: demo CIFAR-100 đã chạy; Caltech-101 chưa có loader tích hợp,
-  checkpoint train hoặc demo đã nghiệm thu. Nơi chạy train mới cần chốt với
-  người dùng trước khi sử dụng một lượt GPU kéo dài.
+- Trạng thái cập nhật: demo CIFAR-100 đã chạy. Caltech-101 có loader/split/trainer
+  riêng và notebook Colab đã setup để người dùng tự chạy; chưa có checkpoint
+  train hoặc GUI Caltech đã nghiệm thu. Không tự bắt đầu lượt GPU dài.
 - Kế hoạch: [CALTECH101_DEMO_PLAN.md](CALTECH101_DEMO_PLAN.md).
+
+## ADR-007: Caltech demo trên Colab, không thay đổi thí nghiệm CIFAR — 14/11/2026
+
+- Người dùng yêu cầu setup đầy đủ rồi tự chạy, có thể mở cùng notebook/tài khoản
+  trên máy khác. Đã lưu đủ7 code cells và hướng dẫn trên notebook Drive; chưa train.
+- Tách `src/tacs/caltech/`, tái dùng model/loss/epoch/optimizer đã có. Không sửa
+  các file `src/tacs/*.py` đang khóa source hash đối chứng CIFAR.
+- Protocol `caltech101_demo_19query_6pool_5val_rest_test_v1`, split seed42,
+  train seed44, No-context rồi Two-Stage,20epoch mỗi model. Không gọi là paper
+  reproduction đầy đủ, không mở test để chọn model.
+- Lưu full checkpoint/latest, optimizer, scheduler, AMP scaler, RNG sau mỗi epoch
+  lên Drive; resume chỉ với source/config/split/reference/environment khớp.
+- Chưa có accuracy Caltech được train; việc mở rộng dataset phục vụ demo không
+  tự chứng minh cải tiến thuật toán.
 
 

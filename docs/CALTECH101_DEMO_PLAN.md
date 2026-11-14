@@ -7,8 +7,10 @@ bộ đã chốt. ADR-006 thay cho cách hiểu sai trong ADR-005.
 ## Phần đã có và phần chưa có
 
 - CIFAR-100: giữ nguyên checkpoint, audit, source thí nghiệm và GUI showcase.
-- Caltech-101: **chưa** tải/kiểm kê dữ liệu trong nhiệm vụ điều chỉnh phạm vi;
-  chưa có loader tích hợp, split, training checkpoint hoặc demo hợp lệ.
+- Caltech-101: đã tải và kiểm kê **8.677 ảnh/101 lớp**, có loader RGB, split
+  không trùng vai trò, trainer riêng và notebook Colab đã thiết lập/saved.
+  Chưa train dài, chưa có checkpoint đã huấn luyện hoặc GUI Caltech hợp lệ.
+  Hướng dẫn vận hành: [CALTECH101_COLAB_GUIDE.md](CALTECH101_COLAB_GUIDE.md).
 - Không dùng ảnh Caltech chạy qua đầu phân loại CIFAR-100 rồi tuyên bố đã
   hỗ trợ dataset mới. Hiển thị ảnh nét không tự làm model nhận diện101lớp mới.
 
@@ -51,14 +53,31 @@ cải tiến thuật toán thành công. Không chọn model bằng tập test.
   loader category/annotation, không có tham số official train/test split trong API.
   Cần tự xác định và lưu protocol chia tập, không mặc định dữ liệu tự có split.
 - Source torchvision cài trên máy đã kiểm tra: loại `BACKGROUND_Google` khỏi
-  category labels. Mã train project hiện vẫn khóa CIFAR-10/100; không chỉ đổi
-  `--dataset caltech101` là chạy được.
+  category labels. Trainer CIFAR cũ vẫn khóa CIFAR-10/100; Caltech dùng module
+  riêng `tacs.caltech.run`, không chỉ đổi `--dataset` trong trainer cũ.
 
-## Bước cần chốt
+## Cấu hình đã chốt cho lượt demo
 
-Nền tảng train Caltech-101: notebook Kaggle, notebook Colab hay máy local.
-Đây là lựa chọn môi trường/ngân sách; không thay dataset đã chốt. Chưa khởi
-chạy GPU dài hoặc mua tài nguyên trong nhiệm vụ cập nhật phạm vi này.
+- Người dùng chọn **Colab**, setup trên máy hiện tại rồi tự mở/chạy trên máy khác.
+  Đã tạo notebook nhúng source; không cần upload dataset/source ZIP.
+- Split demo seed42: mỗi lớp19 query,6 pool,5 validation, phần còn lại test.
+  Tổng1919/606/505/5647; kiểm tra hash ảnh không cắt ngang vai trò. Seed train44.
+  Đây là protocol demo tự xác định, **không phải protocol đánh giá paper**.
+- No-context và Two-Stage tách output; mỗi lượt20 epoch, DINOv3 ViT-S/16
+  pretrained, task head101 lớp, role_v2, input256×256, batch4/accumulation16,
+  AMP, AdamW1e-4, warmup5, cosine20, weight decay1e-4, temperature0.1,
+  policy weight1.0, top-k32. Không tự quét hyperparameter.
+- Reference retrieval là **frozen pretrained DINOv3**, xuất kèm No-context,
+  không phải task encoder đã fine-tune. File được hash trước Two-Stage.
+- Đã qua154 test (2 integration opt-in skipped) và forward/backward trên ảnh
+  Caltech thật cho cả hai mô hình, logits[1,101], gradient hữu hạn; **không có
+  optimizer step**, không dùng smoke để báo accuracy.
+- Source thí nghiệm CIFAR top-level không sửa; bundle đối chứng cũ vẫn được
+  kiểm thử hash. Checkpoint CIFAR không dùng để khởi tạo/resume Caltech.
+
+Bước tiếp: người dùng chạy notebook, thu nguyên output Drive, kiểm tra checkpoint
+và class map rồi mới tích hợp lựa chọn Caltech vào GUI. Không khẳng định demo
+Caltech hoàn tất khi mới chỉ chuẩn bị notebook.
 
 Hai trường hợp biên bắt buộc: ảnh grayscale/nhãn nền phải xử lý đúng; bất kỳ
 ảnh validation/test nào lọt vào candidate pool phải khiến preflight từ chối.
