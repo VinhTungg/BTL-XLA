@@ -1,4 +1,4 @@
-# Caltech-101 Colab: đã setup, người dùng tự chạy
+# Caltech-101 Colab: lịch train 100 epoch, người dùng tự chạy
 
 Ngày 14/11/2026. Không thay đổi checkpoint/source thí nghiệm CIFAR-100.
 Đây là nhánh demo ảnh nguồn lớn hơn CIFAR; không phải tái hiện đầy đủ paper,
@@ -7,8 +7,11 @@ không đảm bảo đạt một mức accuracy và không dùng tập test đ�
 ## Notebook đã lưu
 
 - [Mở notebook trên Colab](https://colab.research.google.com/drive/1Uxt2g6IgY-IKdIMIZtlC5i3ZTiCYS1pB).
-- Tên `TACS_Caltech101_Demo_seed44.ipynb`.
-- Bản local: `artifacts/caltech_demo/TACS_Caltech101_Demo_seed44.ipynb`.
+- Tên `TACS_Caltech101_Full100_seed44.ipynb`.
+- Bản local: `artifacts/caltech_demo/TACS_Caltech101_Full100_seed44.ipynb`.
+- Đã sửa cấu hình ban đầu 20 epoch do agent tự đặt; người dùng yêu cầu train đầy
+  đủ. Lịch hiện hành là **100 epoch mỗi mô hình**, tổng 200 epoch cho hai mô hình.
+  Bản notebook 20 epoch local được giữ để truy vết, không phải bản nên chạy.
 - Builder tái tạo: `scripts/build_caltech_colab.py`. Script từ chối ghi đè notebook
   đã có. Source được nhúng base64 với SHA256; không upload ZIP/dataset thủ công.
 - Đã kiểm tra UI có T4, đủ 7 code cells, mỗi cell paste khớp bản local và trạng thái
@@ -26,7 +29,7 @@ không đảm bảo đạt một mức accuracy và không dùng tập test đ�
    chọn đúng tài khoản và tự cấp quyền. Nếu CAPTCHA xuất hiện, tự hoàn tất.
 4. Chờ cell 3 cài source và cell 4 tải dữ liệu thật, kiểm tra 101 lớp/8.677 ảnh cùng
    số lượng 1919/606/505/5647. Không chạy tiếp khi một cell trước đó báo lỗi.
-5. Cell 5 khóa `EPOCHS=20`, `BASELINE='both'`, `STOP_AFTER=None`. Cell 6 có nhãn
+5. Cell 5 khóa `EPOCHS=100`, `BASELINE='both'`, `STOP_AFTER=None`. Cell 6 có nhãn
    **TRAIN** mới bắt đầu huấn luyện. Thứ tự No-context → Two-Stage tự động;
    cell 7 chỉ xác minh, không train thêm và không đánh giá test.
 
@@ -44,10 +47,10 @@ dùng script giả tương tác/keep-alive để lách giới hạn. Không cầ
 | Protocol | `caltech101_demo_19query_6pool_5val_rest_test_v1` |
 | Split seed / train seed | 42 / 44 |
 | Query train / candidate pool / validation / test | 1919 / 606 / 505 / 5647 |
-| Hai lượt riêng | No-context 20 epoch, rồi Two-Stage 20 epoch |
+| Hai lượt riêng | No-context 100 epoch, rồi Two-Stage 100 epoch |
 | Backbone / task network | DINOv3 ViT-S/16 pretrained, role_v2, 101 logits |
 | Input / batch / accumulation | 256×256 / 4 / 16, AMP |
-| Optimizer/schedule | AdamW, LR 1e-4, WD 1e-4, warmup 5, cosine 20 epoch |
+| Optimizer/schedule | AdamW, LR 1e-4, WD 1e-4, warmup 5, cosine 100 epoch |
 | Context | frozen pretrained DINOv3 top-32 → learned selector; temperature 0.1, policy weight 1.0 |
 | Test | Không dùng để train/chọn checkpoint, chưa đánh giá |
 
@@ -66,7 +69,7 @@ khởi tạo task/selector pretrained riêng; không transfer task weights CIFAR
 Output bền vững:
 
 ```text
-MyDrive/TACS_Caltech101_Demo/seed44_demo_v1/
+MyDrive/TACS_Caltech101_Demo/seed44_full100_v1/
   inventory.json
   split.json
   train.log
@@ -90,23 +93,26 @@ bắt đầu validation, train/val accuracy, thời gian và saved latest. Hiệ
 log từng batch; giai đoạn chuẩn bị top32 hoặc một epoch vẫn có thể im lặng một
 khoảng thời gian. Không nhầm điều này với đã hoàn tất hoặc tự bấm TRAIN lần nữa.
 
-Một run chỉ được đánh dấu complete khi đủ 20 epoch và có `result.json`. Cell 7
+Một run chỉ được đánh dấu complete khi đủ 100 epoch và có `result.json`. Cell 7
 kiểm tra số epoch, hash best checkpoint/metrics và hash reference encoder.
 Chỉ thấy checkpoint không chứng minh cả hai run đã hoàn tất.
 
 ## Nếu bị ngắt giữa chừng
 
 Mở lại **chính notebook**, cấp T4 và mount đúng Drive, chạy lại từ cell 1.
-Giữ nguyên source, EPOCHS=20, output và config. Với `BASELINE='both'`, run đã
+Giữ nguyên source, EPOCHS=100, output và config. Với `BASELINE='both'`, run đã
 complete được kiểm tra rồi bỏ qua, run chưa xong tự khôi phục `checkpoint_latest.pt`
 gồm model/optimizer/scheduler/AMP scaler/RNG và bắt đầu epoch kế tiếp đã lưu.
 Ví dụ epoch 8 lưu xong thì tiếp từ 9; đang dở epoch 9 sẽ chạy lại epoch 9, không
 khôi phục chính giữa batch. Drive phải ghi xong checkpoint để phục hồi được.
 
-Không tăng EPOCHS để giả resume: scheduler đã thiết kế tổng20epoch và manifest
-khóa config. Muốn dừng theo chặng, đặt `STOP_AFTER=10` trước khi chạy; sau đó
-chuyển `STOP_AFTER=None` nhưng vẫn EPOCHS=20. Số này là epoch đích, không phải
+Không tăng EPOCHS để giả resume: scheduler đã thiết kế tổng 100 epoch và manifest
+khóa config. Muốn dừng theo chặng, đặt `STOP_AFTER=25` trước khi chạy; sau đó
+chuyển `STOP_AFTER=None` nhưng vẫn EPOCHS=100. Số này là epoch đích, không phải
 số epoch cộng thêm. Sau khi No-context hoàn tất, Two-Stage mới được phép bắt đầu.
+Output 100 epoch có tên riêng; không lấy checkpoint từ `seed44_demo_v1` rồi sửa
+config/scheduler thành 100 và gọi là train 100 epoch từ đầu. Lịch dài vẫn không tự
+biến protocol chia tập demo này thành protocol tái hiện đầy đủ bài báo.
 
 Manifest sai, output không có nguồn gốc hoặc runtime đổi torch/torchvision/timm/
 numpy/GPU sẽ bị từ chối để tránh trộn thí nghiệm. Giữ nguyên output và xem lỗi;
@@ -116,7 +122,7 @@ không xóa manifest hay tự ghi đè checkpoint để ép chạy. Nếu môi t
 ## Sau khi chạy xong
 
 Chờ cell 7 in COMPLETE cho **cả hai** run, rồi tải nguyên thư mục
-`seed44_demo_v1` về `artifacts/caltech_demo/` (không đổi tên checkpoint thành
+`seed44_full100_v1` về `artifacts/caltech_demo/` (không đổi tên checkpoint thành
 CIFAR). Bước tiếp theo mới là audit artifact và tích hợp Caltech-101 vào GUI,
 preview ảnh native, top-5/nhãn/context/provenance đúng dataset. GUI CIFAR hiện
 có không tự hiểu 101 lớp Caltech khi chỉ đặt file checkpoint vào cạnh nó.
@@ -128,12 +134,12 @@ có không tự hiểu 101 lớp Caltech khi chỉ đặt file checkpoint vào c
 .\.venv\Scripts\python.exe -X utf8 scripts/verify_caltech_setup.py
 ```
 
-- 154 test chạy, không lỗi, 2 test tích hợp opt-in skipped; 9 test mới kiểm tra split,
+- 155 test chạy, không lỗi, 2 test tích hợp opt-in skipped; 10 test Caltech kiểm tra split,
   RGB/background, leakage, manifest, resume fullstate và notebook nhúng source.
 - Dữ liệu Caltech thật: 8.677 ảnh, 101 lớp; loader và split kiểm kê thành công.
 - Real-data GPU smoke: No-context/Two-Stage logits [1,101], gradient/loss hữu hạn;
   **0 optimizer step**, không checkpoint train, không accuracy claim. Smoke không
-  thay thế đánh giá lượt train 20 epoch trên T4 Colab.
+  thay thế đánh giá lượt train 100 epoch trên T4 Colab.
 
 Hai trường hợp biên: không có GPU hoặc Drive chưa mount phải dừng trước train;
 config/split/reference khác lượt cũ phải từ chối resume, không âm thầm train lại.

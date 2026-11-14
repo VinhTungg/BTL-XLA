@@ -39,7 +39,7 @@ class Config:
     embedding_dim: int = 384
     image_size: int = 256
     seed: int = 44
-    epochs: int = 20
+    epochs: int = 100
     batch_size: int = 4
     gradient_accumulation_steps: int = 16
     advantage_scope: str = 'microbatch'
@@ -207,7 +207,7 @@ def fit(cfg, model, train_loader, val_loader, output, inventory, device, stop_af
     return dict(status='partial', last_epoch=len(history))
 
 
-def run(data_root, output_root, baseline, epochs=20, stop_after=None):
+def run(data_root, output_root, baseline, epochs=100, stop_after=None):
     if not torch.cuda.is_available():
         raise RuntimeError('CUDA GPU required; no silent CPU fallback')
     cfg = Config(baseline=baseline, epochs=epochs, warmup_epochs=min(5, epochs-1))
@@ -259,7 +259,7 @@ def main():
     parser.add_argument('--prepare-only', action='store_true')
     parser.add_argument('--download', action='store_true')
     parser.add_argument('--baseline', choices=['no_context','two_stage','both'], default='both')
-    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--stop-after', type=int)
     args = parser.parse_args()
     if args.epochs < 1 or (args.stop_after is not None and not 1 <= args.stop_after <= args.epochs):

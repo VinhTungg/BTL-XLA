@@ -53,6 +53,9 @@ dưới giữ để truy vết, không phải quyết định hiện hành.
 
 ## ADR-007: Caltech demo trên Colab, không thay đổi thí nghiệm CIFAR — 14/11/2026
 
+Lịch20epoch ban đầu dưới đây **đã bị thay thế bởi ADR-008** theo yêu cầu người
+dùng; giữ để truy vết. Hướng dẫn hiện hành dùng lịch100epoch.
+
 - Người dùng yêu cầu setup đầy đủ rồi tự chạy, có thể mở cùng notebook/tài khoản
   trên máy khác. Đã lưu đủ7 code cells và hướng dẫn trên notebook Drive; chưa train.
 - Tách `src/tacs/caltech/`, tái dùng model/loss/epoch/optimizer đã có. Không sửa
@@ -64,5 +67,17 @@ dưới giữ để truy vết, không phải quyết định hiện hành.
   lên Drive; resume chỉ với source/config/split/reference/environment khớp.
 - Chưa có accuracy Caltech được train; việc mở rộng dataset phục vụ demo không
   tự chứng minh cải tiến thuật toán.
+
+## ADR-008: Train Caltech đủ 100 epoch/mô hình, không tự giảm thành pilot — 14/11/2026
+
+- Người dùng phản đối mốc20epoch do agent tự đặt. Chuyển No-context và Two-Stage
+  sang100epoch mỗi mô hình, seed44, scheduler cosine100epoch ngay từ đầu, warmup5.
+  Đây là ngân sách train đầy đủ của nhóm, không khẳng định protocol giống paper.
+- Notebook `TACS_Caltech101_Full100_seed44.ipynb` trên cùng link Drive; source
+  nhúng được dựng lại với defaults100. User vẫn tự bấm TRAIN theo yêu cầu trước.
+- Output mới `TACS_Caltech101_Demo/seed44_full100_v1`, giữ riêng bản20epoch và
+  mọi checkpoint nếu đã có. Không đổi scheduler/config của checkpoint20epoch.
+- Giữ split, kiến trúc và các hyperparameter khác; không tự thay thuật toán hoặc
+  mở sweep. Resume giữ EPOCHS100, có thể dùng STOP_AFTER để dừng theo chặng.
 
 

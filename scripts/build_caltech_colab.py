@@ -26,7 +26,7 @@ def build():
         ast.parse(text)
         cells.append(dict(cell_type='code',metadata={},execution_count=None,outputs=[],source=text.splitlines(True)))
     cells.append(dict(cell_type='markdown',metadata={},source=[
-        '# TACS Caltech-101 — demo ảnh rõ, seed44\n',
+        '# TACS Caltech-101 — train 100 epoch/model, seed44\n',
         'Giữ CIFAR-100 riêng. Đây là protocol demo mới, không phải tái hiện đầy đủ paper.\n',
         'T4 GPU; chạy từng cell từ trên xuống. Cell TRAIN là thao tác bắt đầu huấn luyện.\n',
         'Không mở test để chọn model. Checkpoint lưu Drive sau mỗi epoch. Không bảo đảm Colab chạy liên tục.\n']))
@@ -44,7 +44,7 @@ subprocess.run([sys.executable,'-m','pip','install','timm==1.0.30','psutil>=5.9'
     code('''# 2. DRIVE — tự chọn đúng tài khoản và cấp quyền khi được hỏi.
 from google.colab import drive
 drive.mount('/content/drive')
-OUTPUT_ROOT=Path('/content/drive/MyDrive/TACS_Caltech101_Demo/seed44_demo_v1')
+OUTPUT_ROOT=Path('/content/drive/MyDrive/TACS_Caltech101_Demo/seed44_full100_v1')
 OUTPUT_ROOT.mkdir(parents=True,exist_ok=True)
 print('Persistent output:',OUTPUT_ROOT,flush=True)
 print('Existing entries:',sorted(p.name for p in OUTPUT_ROOT.iterdir()),flush=True)
@@ -78,9 +78,9 @@ print('Native image sizes:',[(x['width'],x['height']) for x in inventory['items'
 assert len(inventory['classes'])==101
 ''')
     code('''# KHÓA CONFIG trước lần train đầu. Không đổi EPOCHS khi resume.
-EPOCHS=20
+EPOCHS=100
 BASELINE='both'  # no_context rồi two_stage; không chạy CIFAR.
-STOP_AFTER=None  # ví dụ 10 = dừng sau epoch10 với scheduler vẫn thiết kế20epoch.
+STOP_AFTER=None  # ví dụ 25 = dừng sau epoch25, scheduler vẫn thiết kế100epoch.
 print('Plan:',BASELINE, 'total epochs/run:',EPOCHS,'stop at:',STOP_AFTER,flush=True)
 print('19 query + 6 pool + 5 validation / class; test giữ riêng. Demo protocol, không phải paper score.')
 ''')
@@ -122,11 +122,11 @@ print('Đây là checkpoint để tích hợp demo Caltech; không đổi tên t
 ''')
     return dict(nbformat=4,nbformat_minor=5,cells=cells,metadata=dict(
         kernelspec=dict(display_name='Python 3',language='python',name='python3'),
-        accelerator='GPU',colab=dict(name='TACS_Caltech101_Demo_seed44.ipynb')))
+        accelerator='GPU',colab=dict(name='TACS_Caltech101_Full100_seed44.ipynb')))
 
 
 def main():
-    path=ROOT/'artifacts/caltech_demo/TACS_Caltech101_Demo_seed44.ipynb'
+    path=ROOT/'artifacts/caltech_demo/TACS_Caltech101_Full100_seed44.ipynb'
     if path.exists():
         raise FileExistsError(f'Refusing to overwrite {path}')
     nb=build()

@@ -27,7 +27,9 @@ class CaltechNotebookTest(unittest.TestCase):
         for cell in cells[:5]:
             self.assertNotIn('subprocess.Popen',cell)
             self.assertNotIn("'-m','tacs.caltech.run'",cell)
-        self.assertIn("EPOCHS=20",cells[4])
+        self.assertIn("EPOCHS=100",cells[4])
+        self.assertIn('seed44_full100_v1',cells[1])
+        self.assertNotIn('seed44_demo_v1',cells[1])
         self.assertIn("BASELINE='both'",cells[4])
         self.assertIn('STOP_AFTER=None',cells[4])
         self.assertIn('train.log',cells[5])

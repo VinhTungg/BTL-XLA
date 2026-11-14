@@ -63,13 +63,13 @@ cải tiến thuật toán thành công. Không chọn model bằng tập test.
 - Split demo seed42: mỗi lớp19 query,6 pool,5 validation, phần còn lại test.
   Tổng1919/606/505/5647; kiểm tra hash ảnh không cắt ngang vai trò. Seed train44.
   Đây là protocol demo tự xác định, **không phải protocol đánh giá paper**.
-- No-context và Two-Stage tách output; mỗi lượt20 epoch, DINOv3 ViT-S/16
+- No-context và Two-Stage tách output; mỗi lượt **100 epoch**, DINOv3 ViT-S/16
   pretrained, task head101 lớp, role_v2, input256×256, batch4/accumulation16,
-  AMP, AdamW1e-4, warmup5, cosine20, weight decay1e-4, temperature0.1,
+  AMP, AdamW1e-4, warmup5, cosine100, weight decay1e-4, temperature0.1,
   policy weight1.0, top-k32. Không tự quét hyperparameter.
 - Reference retrieval là **frozen pretrained DINOv3**, xuất kèm No-context,
   không phải task encoder đã fine-tune. File được hash trước Two-Stage.
-- Đã qua154 test (2 integration opt-in skipped) và forward/backward trên ảnh
+- Đã qua155 test (2 integration opt-in skipped) và forward/backward trên ảnh
   Caltech thật cho cả hai mô hình, logits[1,101], gradient hữu hạn; **không có
   optimizer step**, không dùng smoke để báo accuracy.
 - Source thí nghiệm CIFAR top-level không sửa; bundle đối chứng cũ vẫn được

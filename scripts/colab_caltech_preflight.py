@@ -14,7 +14,7 @@ probe = subprocess.run(
 print('GPU:', probe.stdout.strip(), flush=True)
 print('PyTorch:', torch.__version__, '| CUDA:', torch.version.cuda, flush=True)
 drive.mount('/content/drive')
-OUTPUT_ROOT = Path('/content/drive/MyDrive/TACS_Caltech101_Demo/seed44_demo_v1')
+OUTPUT_ROOT = Path('/content/drive/MyDrive/TACS_Caltech101_Demo/seed44_full100_v1')
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 print('Persistent output:', OUTPUT_ROOT, flush=True)
 print('Existing entries:', sorted(p.name for p in OUTPUT_ROOT.iterdir()), flush=True)

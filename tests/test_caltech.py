@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from PIL import Image
 
 from tacs.caltech.data import (CaltechImages, make_split, validate_split, scan, digest)
-from tacs.caltech.run import Config, fit, require_manifest
+from tacs.caltech.run import Config, fit, require_manifest, restore
 from tacs.baselines import BaselineModel
 from tacs.model import TinyVisionEncoder, TinyPatchTokenTaskNetwork
 
@@ -76,6 +76,10 @@ class CaltechTest(unittest.TestCase):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
                 Config(baseline='two_stage', **kw)
 
+    def test_full_training_defaults_to_100_epochs(self):
+        for name in ('no_context','two_stage'):
+            self.assertEqual(Config(baseline=name).epochs,100)
+
     def test_real_epoch_engine_resume_roundtrip_on_unit_fixture(self):
         with tempfile.TemporaryDirectory() as temp:
             torch.set_num_threads(2)
@@ -91,6 +95,10 @@ class CaltechTest(unittest.TestCase):
             self.assertFalse((output/'result.json').exists())
             first = torch.load(output/'checkpoint_latest.pt',weights_only=True)
             self.assertEqual(first['epoch'],1)
+            with self.assertRaisesRegex(ValueError,'config/history mismatch'):
+                # Reject changed total schedule before touching model/optimizer.
+                restore(output/'checkpoint_latest.pt',None,None,None,None,
+                        Config(baseline='no_context',epochs=100))
             result = fit(cfg,model(),loader,loader,output,inventory,torch.device('cpu'))
             self.assertEqual(result['status'],'complete')
             latest = torch.load(output/'checkpoint_latest.pt',weights_only=True)
