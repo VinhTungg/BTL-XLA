@@ -158,3 +158,9 @@ Hai audit5.000query cùng thứ tự và random contexts, checkpoint/source expe
 nhánh. Chưa chứng minh effective-batch tăng accuracy. Xem
 [EFFECTIVE_BATCH_SELECTOR_AUDIT.md](EFFECTIVE_BATCH_SELECTOR_AUDIT.md) cho
 paired counts, context usage, CE, sai lệch tái đo và quyết định tiếp theo.
+
+Chẩn đoán cosine trên hai checkpoint cũng đã hoàn tất ngày14/11/2026:
+cosine inference không tăng accuracy; frozen retrieval top-1 gần ngang selector.
+Chi tiết [EFFECTIVE_BATCH_COSINE_AUDIT.md](EFFECTIVE_BATCH_COSINE_AUDIT.md).
+Không tự mở thêm lượt train; bước tiếp theo là hoàn thiện demo và tổng hợp
+thực nghiệm, hoặc chốt một giả thuyết nghiên cứu mới có đối chứng rõ ràng.

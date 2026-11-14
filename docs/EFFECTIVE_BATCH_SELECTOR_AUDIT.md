@@ -142,3 +142,12 @@ không đầy đủ; checkpoint/metrics/split sai hash không được dùng đ�
 Kiểm thử liên quan chạy lại ngày14/11: `python -m unittest discover -s tests
 -p test_selector_audit.py -v`, 20/20tests đạt. `git diff --check` không lỗi.
 Không thay source/model/trọng số trong nhiệm vụ nghiệm thu này.
+
+## Chẩn đoán cosine đã hoàn tất — 14/11/2026
+
+Người dùng đã chạy hai audit mới đủ5.000query. Các dự đoán cũ khớp hoàn toàn;
+selector cosine giảm accuracy0,30/0,18điểm % so selector gốc. Frozen retrieval
+top-1 đạt87,94%/87,76%, gần selector87,86%/87,82%; chưa có thắng lợi ổn định
+cho learned reranking hoặc cosine. Không cần chạy lại bước được đề xuất ở trên.
+Xem [EFFECTIVE_BATCH_COSINE_AUDIT.md](EFFECTIVE_BATCH_COSINE_AUDIT.md) cho
+kiểm tra artifact, norm diagnostics, paired counts và quyết định chuyển sang demo.
