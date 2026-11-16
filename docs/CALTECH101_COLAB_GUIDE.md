@@ -4,6 +4,11 @@ Ngày 14/11/2026. Không thay đổi checkpoint/source thí nghiệm CIFAR-100.
 Đây là nhánh demo ảnh nguồn lớn hơn CIFAR; không phải tái hiện đầy đủ paper,
 không đảm bảo đạt một mức accuracy và không dùng tập test để chọn model.
 
+**Cập nhật16/11/2026:** cả hai run100epoch đã tải về và được audit; không cần
+train lại để mở demo. Xem [kết quả](CALTECH101_FULL100_RESULTS.md) và
+[hướng dẫn demo](CALTECH101_DEMO_GUIDE.md). Các bước dưới giữ làm hướng dẫn
+tái lập, không phải yêu cầu khởi chạy lại một lượt cloud.
+
 ## Notebook đã lưu
 
 - [Mở notebook trên Colab](https://colab.research.google.com/drive/1Uxt2g6IgY-IKdIMIZtlC5i3ZTiCYS1pB).

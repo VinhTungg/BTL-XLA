@@ -1,6 +1,8 @@
 param(
-    [ValidateSet('microbatch', 'effective_batch')]
-    [string]$Preset = 'microbatch',
+    [ValidateSet('cifar100', 'caltech101')]
+    [string]$Dataset = 'cifar100',
+    [ValidateSet('microbatch', 'effective_batch', 'full100')]
+    [string]$Preset,
     [ValidateSet('auto', 'cpu', 'cuda')]
     [string]$Device = 'auto'
 )
@@ -12,7 +14,9 @@ if (!(Test-Path -LiteralPath $pythonExe -PathType Leaf)) {
 }
 Push-Location -LiteralPath $projectRoot
 try {
-    & $pythonExe -X utf8 -m tacs.showcase --preset $Preset --device $Device
+    $demoArgs = @('-X', 'utf8', '-m', 'tacs.showcase', '--dataset', $Dataset, '--device', $Device)
+    if ($Preset) { $demoArgs += @('--preset', $Preset) }
+    & $pythonExe @demoArgs
     if ($LASTEXITCODE -ne 0) { throw "Demo dừng với mã $LASTEXITCODE; xem lỗi ở trên." }
 }
 finally { Pop-Location }

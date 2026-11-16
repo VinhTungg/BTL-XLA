@@ -80,4 +80,17 @@ dùng; giữ để truy vết. Hướng dẫn hiện hành dùng lịch100epoch.
 - Giữ split, kiến trúc và các hyperparameter khác; không tự thay thuật toán hoặc
   mở sweep. Resume giữ EPOCHS100, có thể dùng STOP_AFTER để dừng theo chặng.
 
+## ADR-009: Thu hồi Caltech và demo trung thực hai checkpoint — 16/11/2026
+
+- Đã audit14file từ ZIP, cả hai latest ở100epoch, best ở21(No-context)/54(Two-Stage),
+  source khớp notebook train và ảnh local khớp inventory. Giữ ZIP và checkpoints.
+- Best validation95,64%/94,26%, Two-Stage thấp hơn1,38điểm phần trăm. Không
+  gọi là test accuracy hoặc tuyên bố cải tiến thành công. Chưa đánh giá test.
+- Thêm Caltech trong GUI hiện tại, preview ảnh native; không sửa model/train/data
+  CIFAR, không train lại, không ghi đè source bundle cloud đã dùng train.
+- Bốn can thiệp cùng task weights Two-Stage được tách khỏi hàng No-context
+  **train độc lập**. JSON có hash checkpoint theo từng hàng và dataset đúng.
+- Replay505validation local cho476/505selected và483/505No-context độc lập;
+  examples178giúp/169hại là ví dụ có chủ đích, không thay số liệu toàn tập.
+
 

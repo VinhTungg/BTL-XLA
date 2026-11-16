@@ -1,5 +1,10 @@
 # Demo offline CIFAR-100 bằng checkpoint thật
 
+**Cập nhật16/11/2026:** cùng ứng dụng đã hỗ trợ thêm Caltech-101 bằng hai
+checkpoint100epoch thật. Chạy với `--dataset caltech101` hoặc chọn dataset trên
+GUI. Hướng dẫn Caltech và ví dụ giúp/hại tại [CALTECH101_DEMO_GUIDE.md](CALTECH101_DEMO_GUIDE.md).
+Phần bên dưới vẫn là hướng dẫn/số liệu riêng cho CIFAR-100, không đổi nhãn thành Caltech.
+
 ## Phạm vi đã chốt — 14/11/2026
 
 Phạm vi hiện hành: giữ CIFAR-100 và **thêm Caltech-101 để demo ảnh rõ**; không

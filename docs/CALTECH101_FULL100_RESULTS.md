@@ -17,6 +17,12 @@ xong; checkpoint dùng trong demo là **best validation**, không phải tự đ
 epoch100. Vì validation chỉ505ảnh và dùng chọn checkpoint, kết quả này chưa
 đủ cho kết luận tổng quát/ý nghĩa thống kê.
 
+Replay inference local trên đủ505validation sau thu hồi cho đúng483/505 và476/505,
+khớp số cloud khi làm tròn. Chênh7/505 tương đương khoảng1,386điểm phần trăm
+(1,39 nếu làm tròn2chữ số); con số1,38ở trên là hiệu hai số trainer đã làm tròn.
+Replay không cập nhật weights, không mở test. Hướng dẫn/kịch bản:
+[CALTECH101_DEMO_GUIDE.md](CALTECH101_DEMO_GUIDE.md).
+
 Validation cân bằng5ảnh/lớp nên Acc và mean-per-class accuracy bằng nhau trên
 **validation này**. Số báo cáo train được làm tròn4chữ số thập phân. Chưa đánh
 giá test; không gọi95,64% hoặc94,26% là test accuracy.

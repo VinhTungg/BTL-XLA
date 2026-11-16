@@ -1,1 +1,1 @@
-"""Presentation layer for recovered CIFAR-100 pilots; training code is unchanged."""
+"""Offline presentation of verified CIFAR-100 and Caltech-101 checkpoints."""

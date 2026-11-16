@@ -9,7 +9,10 @@ bộ đã chốt. ADR-006 thay cho cách hiểu sai trong ADR-005.
 - CIFAR-100: giữ nguyên checkpoint, audit, source thí nghiệm và GUI showcase.
 - Caltech-101: đã tải và kiểm kê **8.677 ảnh/101 lớp**, có loader RGB, split
   không trùng vai trò, trainer riêng và notebook Colab đã thiết lập/saved.
-  Chưa train dài, chưa có checkpoint đã huấn luyện hoặc GUI Caltech hợp lệ.
+  **Cập nhật16/11/2026:** đã thu hồi hai run100epoch, xác minh best/latest, source,
+  class map, split và dữ liệu local. GUI hỗ trợ Caltech-101; hướng dẫn tại
+  [CALTECH101_DEMO_GUIDE.md](CALTECH101_DEMO_GUIDE.md), số liệu tại
+  [CALTECH101_FULL100_RESULTS.md](CALTECH101_FULL100_RESULTS.md).
   Hướng dẫn vận hành: [CALTECH101_COLAB_GUIDE.md](CALTECH101_COLAB_GUIDE.md).
 - Không dùng ảnh Caltech chạy qua đầu phân loại CIFAR-100 rồi tuyên bố đã
   hỗ trợ dataset mới. Hiển thị ảnh nét không tự làm model nhận diện101lớp mới.
@@ -75,9 +78,10 @@ cải tiến thuật toán thành công. Không chọn model bằng tập test.
 - Source thí nghiệm CIFAR top-level không sửa; bundle đối chứng cũ vẫn được
   kiểm thử hash. Checkpoint CIFAR không dùng để khởi tạo/resume Caltech.
 
-Bước tiếp: người dùng chạy notebook, thu nguyên output Drive, kiểm tra checkpoint
-và class map rồi mới tích hợp lựa chọn Caltech vào GUI. Không khẳng định demo
-Caltech hoàn tất khi mới chỉ chuẩn bị notebook.
+Bước train/thu hồi/tích hợp đã hoàn tất16/11/2026. Đã replay505validation qua
+demo; No-context483/505, Two-Stage476/505, khớp số cloud khi làm tròn. Hai mô hình
+không sửa weights trong replay, không mở test. Bước tiếp: tập thao tác demo theo
+hướng dẫn, dùng số liệu thật và nói rõ Two-Stage chưa thắng No-context.
 
 Hai trường hợp biên bắt buộc: ảnh grayscale/nhãn nền phải xử lý đúng; bất kỳ
 ảnh validation/test nào lọt vào candidate pool phải khiến preflight từ chối.
