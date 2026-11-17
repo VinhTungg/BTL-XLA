@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 .claude/
 .idea/
+.git-initialized-backup/
 data/
 checkpoints/
 outputs/

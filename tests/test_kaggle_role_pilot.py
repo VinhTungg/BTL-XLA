@@ -7,6 +7,7 @@ import json
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 class KagglePilotNotebookTest(unittest.TestCase):
@@ -18,8 +19,12 @@ class KagglePilotNotebookTest(unittest.TestCase):
             'selector_pilot_builder', root / 'scripts/build_kaggle_role_pilot.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.main(selector_pilot=True)
-        notebook = json.loads((root / 'artifacts/role_v2/TACS_Kaggle_Selector_Pilot.ipynb').read_text(encoding='utf-8'))
+        target = root / 'artifacts/role_v2/TACS_Kaggle_Selector_Pilot.ipynb'
+        with patch.object(Path, 'write_text', autospec=True, return_value=0) as write:
+            module.main(selector_pilot=True)
+        write.assert_called_once()
+        self.assertEqual(write.call_args.args[0], target)
+        notebook = json.loads(write.call_args.args[1])
         cells = [''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code']
         self.assertEqual(len(cells), 3)
         for cell in cells:
@@ -46,8 +51,12 @@ class KagglePilotNotebookTest(unittest.TestCase):
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.main()
-        notebook = json.loads((root / 'artifacts/role_v2/TACS_Kaggle_Role_Pilot.ipynb').read_text(encoding='utf-8'))
+        target = root / 'artifacts/role_v2/TACS_Kaggle_Role_Pilot.ipynb'
+        with patch.object(Path, 'write_text', autospec=True, return_value=0) as write:
+            module.main()
+        write.assert_called_once()
+        self.assertEqual(write.call_args.args[0], target)
+        notebook = json.loads(write.call_args.args[1])
         cells = [''.join(c['source']) for c in notebook['cells'] if c['cell_type'] == 'code']
         self.assertEqual(len(cells), 3)
         for code in cells:

@@ -1,331 +1,136 @@
-# TACS Improvement Project
+# TACS: tái hiện, thực nghiệm và demo
 
-Tái hiện và cải tiến **Task-Aligned Context Selection (TACS)** cho bài toán phân loại ảnh CIFAR-10 và CIFAR-100.
+Tái hiện cơ chế **Task-Aligned Context Selection** cho phân loại ảnh và phát triển
+truy xuất context hai giai đoạn. Phạm vi hiện tại: **CIFAR-100 và Caltech-101**.
+Ứng dụng demo dùng dữ liệu/checkpoint thật, suy luận offline, không cần train lại.
 
-TACS học cách chọn ảnh tham chiếu hữu ích cho ảnh truy vấn. Ảnh được chọn không nhất thiết giống ảnh truy vấn nhất, mà phải giúp mô hình downstream phân loại chính xác hơn.
+## Bắt đầu từ đâu?
 
-**Cập nhật 04/11/2026:** DINOv3 mặc định dùng `role_v2` để phân biệt query/context.
-Run mới lưu trong namespace `role_v2`; checkpoint cũ phải chọn `--task-network-version legacy_v1`.
-Xem [nguyên nhân, kiểm thử checkpoint và hướng dẫn pilot](docs/CONTEXT_ROLE_FIX.md).
-Bản sửa kiến trúc chưa phải bằng chứng tăng accuracy sau huấn luyện.
+| Công việc | Tài liệu |
+|---|---|
+| Chạy demo Caltech-101 với ảnh nguồn rõ hơn | [Hướng dẫn Caltech](docs/CALTECH101_DEMO_GUIDE.md) |
+| Chạy demo CIFAR-100 | [Hướng dẫn showcase](docs/SHOWCASE_GUIDE.md) |
+| Dựng slide và luyện nói | [Kịch bản 15 slide, demo và hỏi đáp](docs/SLIDE_SCRIPT.md) |
+| Xem kết quả Caltech đã xác minh | [Kết quả full100](docs/CALTECH101_FULL100_RESULTS.md) |
+| Tìm toàn bộ báo cáo, pilot và tài liệu lịch sử | [Mục lục tài liệu](docs/README.md) |
+| Xem phạm vi dọn project và các file được giữ | [Biên bản cleanup](docs/PROJECT_CLEANUP.md) |
 
-## Mục tiêu
+## Chạy demo trên máy đã có môi trường
 
-1. Xây dựng baseline không dùng context.
-2. So sánh random context và similarity context.
-3. Tái hiện TACS bằng Gumbel-Softmax và policy gradient.
-4. Cải tiến tốc độ truy xuất bằng phương pháp two-stage.
-5. Đánh giá bằng accuracy, tốc độ và bộ nhớ.
+Từ thư mục gốc repository, mở PowerShell:
 
-## Yêu cầu môi trường
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m tacs.showcase --dataset caltech101
+```
 
-- Python 3.10 trở lên.
-- Windows, Linux hoặc macOS.
-- CUDA không bắt buộc; chương trình tự dùng CPU nếu không có GPU.
+CIFAR-100:
 
-## Cài đặt
+```powershell
+.\.venv\Scripts\python.exe -X utf8 -m tacs.showcase --dataset cifar100
+```
 
-Tạo và kích hoạt môi trường ảo trên Windows PowerShell:
+Chờ trạng thái **Sẵn sàng**, chọn ảnh rồi bấm **So sánh dự đoán**.
+Caltech có ví dụ nhanh tại validation position 0, 178 và 169.
+Ứng dụng hiển thị query, context, top-5 và cho phép lưu JSON bằng chứng với tên mới.
+
+Không chỉ clone source rồi mặc định checkpoint đã có sẵn. Demo cần:
+
+- Môi trường `.venv` đã cài project và thư viện.
+- Dữ liệu thật trong `data/`, bao gồm split đúng với lần train.
+- Các checkpoint, manifest và frozen reference trong `artifacts/` theo hướng dẫn từng dataset.
+- Cache demo hiện có được giữ để tránh mã hóa lại pool trước buổi bảo vệ.
+
+Thiếu hoặc không khớp artifact phải báo lỗi, không thay bằng model chưa train.
+Ảnh ngoài các lớp đã học vẫn bị ép chọn một nhãn; demo chưa phát hiện unknown.
+Ảnh riêng không có nhãn thật thì không tự chấm đúng/sai.
+
+## Trạng thái kết quả
+
+| Thí nghiệm | Ngân sách và tập đánh giá | Kết quả được phép báo cáo |
+|---|---|---|
+| CIFAR-100 Two-Stage role_v2, seed 44 | Pilot 20 epoch, validation | Microbatch 87,92%; effective-batch 87,80% |
+| Caltech-101 No-context, seed 44 | 100 epoch, best validation | 95,64%, best epoch 21 |
+| Caltech-101 Two-Stage role_v2, seed 44 | 100 epoch, best validation | 94,26%, best epoch 54 |
+
+Caltech dùng protocol riêng, chưa đánh giá test. Pilot CIFAR mới cũng chưa test.
+Không trộn với các kết quả test lịch sử của `legacy_v1`, không gọi đây là tái hiện
+toàn bộ bài báo và không tuyên bố Two-Stage đã tăng accuracy so với baseline độc lập.
+Trong demo, **bỏ context trên cùng weights** khác với **No-context train riêng**.
+
+## Cài môi trường trên máy mới
+
+Yêu cầu Python theo `pyproject.toml` là 3.10 trở lên. Chỉ tạo `.venv` nếu chưa có:
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe -m pip install -e .
 ```
 
-Cài project và dependency:
+Project không định nghĩa extra `dev`. Nếu cần tiện ích vẽ biểu đồ:
 
 ```powershell
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install -e ".[viz]"
 ```
 
-Thiết lập đường dẫn source:
+Kiểm tra Python, Torch và CUDA:
 
 ```powershell
-$env:PYTHONPATH="src"
+.\.venv\Scripts\python.exe -X utf8 scripts/check_env.py
 ```
 
-## Tải CIFAR-10 hoặc CIFAR-100
+Lệnh cài môi trường không tải sẵn các artifact thí nghiệm hoặc dữ liệu demo.
 
-Chỉ cần chạy một lần:
+## Kiểm thử
 
 ```powershell
-python -c "from tacs.data import build_cifar10; build_cifar10('data', 'data/splits/cifar10_seed42.json', download=True)"
-python -c "from tacs.data import build_cifar100; build_cifar100('data', 'data/splits/cifar100_seed42.json', download=True)"
+.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests -q
+.\.venv\Scripts\python.exe -X utf8 -m tacs.showcase --dataset caltech101 --check-ui
 ```
 
-Cả hai bộ dữ liệu có 50.000 ảnh train và được chia cố định bằng seed 42:
+`--check-ui` chỉ tạo/hủy widget, không kiểm tra trực quan hay suy luận checkpoint.
+Hai integration test dữ liệu thật mặc định được skip; chỉ bật
+`TACS_RUN_REAL_CIFAR_TESTS=1` khi chủ động kiểm thử với dữ liệu local phù hợp.
+Unit test có fixture tổng hợp để kiểm tra kỹ thuật, không dùng làm số liệu thực nghiệm.
 
-- 36.000 ảnh query train.
-- 9.000 ảnh candidate pool.
-- 5.000 ảnh validation.
-- 10.000 ảnh test.
+## Huấn luyện và nghiên cứu tiếp
 
-## Chạy kiểm thử
+Cleanup không thay model, loss, split, recipe hay checkpoint. Đọc đúng tài liệu
+trước khi mở thêm lượt train:
+
+- [Caltech trên Colab](docs/CALTECH101_COLAB_GUIDE.md).
+- [Pilot microbatch/effective-batch](docs/EFFECTIVE_BATCH_PILOT.md).
+- [Bản sửa vai trò query/context](docs/CONTEXT_ROLE_FIX.md).
+- [Kế hoạch tái hiện và phát triển](docs/ROADMAP_REPRODUCTION_TO_DEMO.md).
+  Đây là kế hoạch có mốc lịch sử, không phải danh sách tất cả mục đã hoàn thành.
+
+Xem CLI mà không train:
 
 ```powershell
-python -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -X utf8 -m tacs.train --help
+.\.venv\Scripts\python.exe -X utf8 -m tacs.multiseed --plan-only
 ```
 
-Bộ test bao phủ shape, chia dữ liệu, candidate sampling, forward pass,
-gradient, retrieval, trainer và kiểm tra tích hợp CIFAR-10. Integration test dùng
-dữ liệu thật được tắt mặc định và chỉ chạy khi đặt
-`TACS_RUN_REAL_CIFAR_TESTS=1`.
+Trainer CIFAR còn hỗ trợ CIFAR-10/tiny để tương thích và kiểm thử. Khi train
+CIFAR-100 phải chỉ định dataset/backbone phù hợp, không dựa vào mặc định cũ.
+Run mới dùng `role_v2`; checkpoint legacy không tự được nâng cấp sang version mới.
+Candidate bank, proxy gradient và tích lũy gradient là các lựa chọn triển khai
+cần khai báo khi đối chiếu với paper.
 
-## Chế độ dữ liệu của trainer
+## Cấu trúc project
 
-Trainer mặc định dùng CIFAR-10 thật; thêm `--dataset cifar100` để
-chạy CIFAR-100 thật. `num_classes`, file split, output directory và standard
-encoder được chọn theo dataset. `--dry-run` chỉ giới hạn số mẫu và số
-epoch; nó vẫn đọc dữ liệu thật. Trainer không còn chế độ dữ liệu mock.
-
-Ví dụ smoke run trên CIFAR-100:
-
-```powershell
-python -m tacs.train --dataset cifar100 --baseline no_context --dry-run --device cpu
+```text
+src/tacs/       Model, loss, dữ liệu, trainer, audit và demo
+scripts/        Đóng gói cloud, thu hồi kết quả, kiểm tra và launcher
+tests/          Unit test và integration test opt-in
+notebooks/      Notebook Colab đã version hóa
+docs/           Hướng dẫn hiện hành, kết quả đã xác minh và tài liệu lịch sử
+data/           Dataset và split thật, không commit Git
+artifacts/      Checkpoint, bundle, archive và bằng chứng, không commit Git
+outputs/        Các run đầu ra được giữ để truy vết
+cifar100/       Checkpoint legacy seed 44 được giữ để đối chiếu
+translated/     Bản dịch bài báo
 ```
 
-## Backbone DINOv3 ViT-S/16
-
-Chế độ gần thiết lập paper dùng backbone DINOv3 ViT-S/16 qua `timm`:
-
-```powershell
-python -m tacs.train --dataset cifar100 --backbone dinov3_vits16 --baseline no_context --device cuda
-```
-
-Profile này tự động dùng embedding 384 chiều, ảnh 256×256, ImageNet
-normalization và pretrained weights `vit_small_patch16_dinov3.lvd1689m`.
-Lần chạy đầu cần Internet để tải weights và người dùng phải tuân thủ
-DINOv3 License. Thêm `--no-pretrained-backbone` chỉ để kiểm tra kỹ thuật;
-không dùng kết quả đó làm thí nghiệm báo cáo.
-
-Trainer dùng AdamW và `CosineAnnealingLR` cho mọi mô hình để việc so
-sánh công bằng; có thể thêm linear warm-up bằng `--warmup-epochs`. Profile DINOv3 mặc định 100 epochs theo paper; profile
-`tiny` giữ 5 epochs cho kiểm tra nhanh. Có thể ghi đè bằng `--epochs`,
-`--lr` và `--min-lr`. Khi VRAM không đủ cho batch paper, dùng
-`--batch-size 4 --gradient-accumulation-steps 16` để giữ batch hiệu dụng
-64. Mỗi epoch lưu `learning_rate` và
-`next_learning_rate` trong `metrics.json`; checkpoint lưu cả optimizer và
-scheduler state.
-
-Trên CUDA, trainer mặc định dùng automatic mixed precision FP16 để giảm VRAM
-và tăng throughput nhưng không thay đổi dataset hay kiến trúc. Có thể tắt bằng
-`--no-amp` để debug số học FP32. DataLoader tự bật pinned memory và tensor được
-chuyển lên GPU theo chế độ non-blocking.
-
-Sau mỗi epoch, `checkpoint_latest.pt` lưu model, optimizer, scheduler, AMP
-scaler, lịch sử và RNG state. Khi chạy lại cùng lệnh, trainer tự tiếp tục từ
-checkpoint này; với run cũ chưa có checkpoint latest, trainer dùng
-`checkpoint_best.pt` tương thích làm fallback. Dùng `--no-resume` để chủ động
-train lại từ đầu.
-
-## Task Network ghép patch token
-
-Nhánh phân loại TACS bám theo Sec. 4.2 của paper: query và context được
-patch-embed riêng, sau đó nối thành một chuỗi token trước các Transformer
-block. Logit được sinh từ CLS token chung. Nhánh reward no-context chỉ
-chứa patch token của query, không dùng context rỗng giả.
-
-Profile `tiny` dùng Task Network Transformer nhỏ để unit test CPU. Profile
-`dinov3_vits16` dùng một ViT-S/16 DINOv3 cho Selector và một ViT-S/16
-DINOv3 riêng cho Downstream Task Network, đúng cấu trúc hai module của TACS.
-
-Ba baseline cũng dùng chính Task Network này: `no_context` chỉ truyền query
-patches, còn `random` và `similarity` truyền cặp query/context patches. Encoder
-dùng để lập cache similarity được đóng băng. Như vậy các mô hình
-khác nhau ở cách chọn context thay vì khác cấu trúc classifier.
-
-Mỗi `metrics.json` ghi rõ `data.source`, kích thước các tập và hash của
-file split để xác minh kết quả được tạo từ đúng dữ liệu.
-
-## Standard encoder và cache retrieval
-
-Phải train `no_context` trước khi chạy `similarity` hoặc `two_stage`.
-Hai mode retrieval chỉ chấp nhận `best_encoder.pt` có metadata xác nhận
-baseline `no_context`, đúng dataset và đúng `embedding_dim`. Checkpoint cũ không có
-provenance sẽ bị từ chối và cần train lại.
-
-Cache candidate embedding được kiểm tra bằng hash của split, danh sách
-candidate, standard encoder và embedding dimension. Cache cũ, sai kích thước
-hoặc không khớp checkpoint sẽ được tự động tái tạo.
-
-## TACS Full và Two-Stage
-
-- Utility score trong TACS Selector dùng tích vô hướng trực tiếp
-  `z_queryᵀ z_candidate` theo Eq. (1), không chuẩn hóa L2. Cosine similarity
-  chỉ được dùng cho baseline `similarity` và tầng lọc thô của
-  `two_stage`.
-- `--baseline tacs` chấm điểm **toàn bộ candidate pool** cho mỗi query. Candidate
-  được mã hóa thành một bank dùng chung, làm mới mỗi epoch, nên DataLoader không
-  nhân bản 9.000 ảnh cho từng query. Bank được detach để giới hạn bộ nhớ; encoder
-  vẫn nhận gradient qua nhánh query. Sau lựa chọn, trainer chỉ nạp ảnh
-  context thắng cuộc vào Task Network. Proxy straight-through có giá trị forward
-  bằng 0 giữ gradient từ task loss về utility score mà không cần đưa toàn
-  bộ pool ảnh 256×256 lên GPU.
-- `--baseline two_stage --topk-candidates 32` quét toàn pool bằng cosine từ
-  standard encoder, sau đó chỉ đưa top-32 vào TACS selector. Dataset chỉ
-  chuyển các vị trí top-k; trainer gom embedding từ một candidate bank dùng chung,
-  được làm mới mỗi train/evaluation epoch, thay vì mã hóa lại `B*k` ảnh
-  candidate trong từng batch.
-- `--topk-candidates` chỉ tác động đến Two-Stage, không thu nhỏ TACS Full.
-- Hai mode dùng cùng kiến trúc và cùng khởi tạo model theo seed. Có thể đặt
-  `--selector-temperature` và `--policy-weight`. Temperature điều khiển gradient
-  của Gumbel-Softmax relaxation; validation/test luôn chọn argmax xác định.
-- Để so sánh cùng cơ chế gradient và giữ bộ nhớ ổn định, candidate embedding ở
-  cả hai mode đều detach; selector encoder vẫn học qua query embedding.
-
-`metrics.json` ghi strategy, số candidate bị retrieval quét, số candidate được
-selector đánh giá, thời gian setup/retrieval, latency/query end-to-end và
-throughput validation để việc so sánh không nhầm giữa Full và top-k.
-
-## Benchmark 5 mô hình
-
-Trainer ghi metrics schema v6 với peak RSS, peak CUDA allocated/reserved, thời
-gian setup, latency end-to-end và cấu hình thí nghiệm. Sau khi train đủ năm mô
-hình với `--eval-test`, chạy:
-
-```powershell
-python scripts/analyze_all_models.py --outputs-root outputs --output-dir docs
-```
-
-Script kiểm tra cả năm lần chạy dùng CIFAR-10 thật, đúng kích thước đầy đủ, cùng
-split, seed, epoch, batch size và embedding dimension. Artifact dry-run, thiếu
-test result hoặc schema cũ sẽ bị từ chối. Kết quả gồm:
-
-- `docs/all_models_benchmark.csv`
-- `docs/all_models_benchmark.json`
-- `docs/all_models_benchmark.md`
-- `docs/all_models_comparison.png`
-
-Chỉ để kiểm tra pipeline bằng dry-run, có thể thêm `--allow-incomplete`; dữ liệu
-này không được dùng làm kết quả báo cáo.
-
-## Chạy thí nghiệm 3 seed
-
-Runner nhiều seed mặc định chạy đủ năm mô hình trên CIFAR-100 với DINOv3
-ViT-S/16, 100 epochs và các seed `42 43 44`. Mỗi lần chạy nằm trong một process
-riêng để giải phóng VRAM trước mô hình kế tiếp. `no_context` luôn được chạy trước
-`similarity` và `two_stage` để tạo standard encoder đúng seed.
-
-Kiểm tra trước toàn bộ lệnh và đường dẫn mà không train:
-
-```powershell
-python -m tacs.multiseed --plan-only
-```
-
-Smoke test nhanh pipeline nhiều seed bằng cấu hình nhỏ:
-
-```powershell
-python -m tacs.multiseed --dataset cifar10 --backbone tiny --dry-run --device cpu
-```
-
-Chạy thí nghiệm chính thức:
-
-```powershell
-python -m tacs.multiseed --device cuda --num-workers 4
-```
-
-Kết quả mỗi seed được lưu tại
-`outputs/cifar100/dinov3_vits16/seed_<seed>/<baseline>/`. Runner tự bỏ qua run
-đã hoàn chỉnh và tiếp tục từ run còn thiếu; thêm `--force` khi thật sự muốn chạy
-lại từ đầu. Một run đang dở được tiếp tục từ checkpoint gần nhất; `--force`
-đồng thời tắt resume. Cả ba seed dùng chung split mặc định
-`data/splits/cifar100_seed42.json`, do
-đó độ lệch chuẩn phản ánh biến thiên huấn luyện thay vì thay đổi tập dữ liệu.
-
-Ví dụ phù hợp GPU laptop/Colab T4, dùng micro-batch 4 nhưng giữ batch hiệu dụng 64:
-
-```powershell
-python -m tacs.multiseed --device cuda --batch-size 4 --gradient-accumulation-steps 16 --lr 1e-4 --warmup-epochs 5 --num-workers 2
-```
-
-Sau khi hoàn tất, mean và sample standard deviation (`ddof=1`) được xuất ra:
-
-- `outputs/cifar100/dinov3_vits16/multiseed_summary.json`
-- `outputs/cifar100/dinov3_vits16/multiseed_summary.csv`
-- `outputs/cifar100/dinov3_vits16/multiseed_summary.md`
-
-## Chạy trên Google Colab
-
-Notebook `notebooks/TACS_Colab.ipynb` tự mount Google Drive, cài project, tải
-CIFAR-100, kiểm tra GPU và chạy runner theo từng seed. Output v2 được ghi vào
-`MyDrive/TACS_outputs_v2`, nên khi Colab ngắt phiên chỉ cần kết nối lại và chạy lại
-notebook để resume.
-
-Tạo bundle nhẹ gồm source và split CIFAR-100, không kèm checkpoint pilot cũ:
-
-```powershell
-.\scripts\package_colab.ps1 -WithoutCheckpoint
-```
-
-File `artifacts/TACS_Colab_Bundle.zip` sinh ra không được commit. Upload file đó
-vào thư mục gốc Google Drive, mở notebook trên Colab, chọn runtime GPU và chạy
-các cell theo thứ tự. Notebook mặc định dùng batch vật lý 4, tích lũy 16 bước
-(batch hiệu dụng 64), learning rate `1e-4`, warm-up 5 epoch và quản lý cả ba
-seed `42 43 44` trong cùng một lệnh. Thư mục v2 tách biệt hoàn toàn với kết quả
-pilot cũ. Khi Colab ngắt, chạy lại notebook; runner
-tự bỏ qua run hoàn chỉnh và resume run còn dở. Chỉ coi thí nghiệm là xong khi
-cell xác minh cuối cùng xác nhận đủ `metrics.json`, kết quả test và ba file
-`multiseed_summary.json`, `multiseed_summary.csv`, `multiseed_summary.md`.
-
-## Chạy smoke training
-
-```powershell
-python -m tacs.train_smoke --steps 5
-```
-
-Smoke training dùng một vài batch CIFAR-10 thật để kiểm tra nhanh model
-và loss; không phải kết quả huấn luyện chính thức.
-
-## Benchmark DataLoader
-
-```powershell
-python -m tacs.bench_data
-```
-
-Có thể thay đổi cấu hình:
-
-```powershell
-python -m tacs.bench_data --batch-size 64 --batches 50 --workers 0 --device auto
-```
-
-Benchmark báo cáo số query mỗi giây và RAM sử dụng.
-
-Sau khi chạy xong:
-
-```powershell
-Remove-Item Env:PYTHONPATH
-```
-
-## Cấu trúc chính
-
-- `src/tacs/model.py`: Selector và mạng phân loại.
-- `src/tacs/losses.py`: task loss và policy loss.
-- `src/tacs/data.py`: CIFAR-10/CIFAR-100, split và candidate sampling.
-- `src/tacs/device.py`: thiết bị và seed.
-- `src/tacs/bench_data.py`: benchmark pipeline dữ liệu.
-- `tests/`: unit test.
-- `docs/`: báo cáo và tài liệu quản lý dự án.
-
-## Tài liệu
-
-- [Demo offline CIFAR-100](docs/SHOWCASE_GUIDE.md): chạy
-  `.\.venv\Scripts\python.exe -X utf8 -m tacs.showcase`, chọn checkpoint đã audit,
-  xem query/context/top-5 và lưu bằng chứng JSON. Mặc định CIFAR-100; chọn dataset
-  trong GUI hoặc thêm `--dataset caltech101` để mở [demo ảnh Caltech-101](docs/CALTECH101_DEMO_GUIDE.md).
-  Đã thu hồi/audit hai checkpoint100epoch: [kết quả Caltech](docs/CALTECH101_FULL100_RESULTS.md).
-  Best validation No-context95,64%, Two-Stage94,26%; chưa có test score hoặc bằng chứng tăng accuracy.
-
-- [Kế hoạch tiếp theo từ tái hiện đến demo và bảo vệ](docs/ROADMAP_REPRODUCTION_TO_DEMO.md):
-  kế hoạch hiện hành ngày 30/10/2026 cho CIFAR-100/DINOv3, gồm audit paper,
-  protocol, train nhiều seed, cải tiến, ngân sách GPU, demo và phân công ba người.
-- `docs/PROJECT_PLAN.md`: kế hoạch tổng thể.
-- `docs/WEEK_1_ASSIGNMENT.md`: phân công tuần 1.
-- `docs/WEEK_2_ASSIGNMENT.md`: phân công tuần 2 và chuỗi bàn giao baseline.
-- `docs/REPORT.md`: báo cáo kỹ thuật.
-- `docs/PROGRESS.md`: tiến độ dự án.
-- `docs/DECISIONS.md`: quyết định kỹ thuật.
-- `docs/CIFAR100_TACS_SEED42_RESULTS.md`: kết quả TACS 100 epoch trên CIFAR-100,
-  manifest artifact và checksum checkpoint.
-- `docs/BAO_CAO_TIEN_DO_TUAN_1.md`: báo cáo tiến độ và nghiệm thu toàn diện Tuần 1.
-- `docs/BAO_CAO_TIEN_DO_TUAN_2.md`: báo cáo tiến độ và kết quả thực nghiệm 3 baseline Tuần 2.
+Không xóa `artifacts/`, `outputs/`, `cifar100/`, dữ liệu hoặc Git objects chỉ vì
+chúng có dung lượng lớn. Đây không phải cache dùng một lần. Xem biên bản cleanup
+để biết nhóm có thể xóa/tạo lại và nhóm cần duyệt riêng.
