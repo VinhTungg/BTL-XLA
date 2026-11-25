@@ -12,10 +12,14 @@ import threading
 from ..inference import DemoEngine
 from .explain import (
     HOW_IT_WORKS_TEXT,
+    SCORING_MODE_DETAILS,
+    SCORING_MODES,
     STRATEGY_DESCRIPTIONS,
     candidate_badges,
     candidate_rank_text,
+    format_stage2_score,
     pipeline_card_texts,
+    scoring_mode_label,
     step_narration,
     strategy_group,
     summarize_outcome,
@@ -148,14 +152,17 @@ def external_input(path, dataset='cifar100'):
     )
 
 
-def make_report(engine, image, query):
+def make_report(engine, image, query, scoring_mode='dot'):
+    if scoring_mode not in SCORING_MODES:
+        raise ValueError(f'Chế độ chấm điểm không hợp lệ: {scoring_mode}')
     if query.get('dataset', getattr(engine, 'dataset_name', 'cifar100')) != getattr(engine, 'dataset_name', 'cifar100'):
         raise ValueError('Ảnh và model khác dataset; chọn ảnh lại sau khi đổi dataset')
-    report = engine.predict(image)
+    report = engine.predict(image) if scoring_mode == 'dot' else engine.predict(image, scoring_mode=scoring_mode)
     report['metadata'] = dict(report['metadata'])
     report['query'] = dict(query)
     report['query']['rgb_sha256'] = hashlib.sha256(image.convert('RGB').tobytes()).hexdigest()
     report['random_seed'] = 44
+    report['scoring_mode'] = report.get('scoring_mode', scoring_mode)
     for item in report['results'].values():
         item['correct'] = None if query['target'] is None else item['prediction'] == query['target']
     return report
@@ -169,7 +176,7 @@ def write_report(path, report):
 
 
 class ShowcaseApp:
-    def __init__(self, root, preset='microbatch', device='auto', initialize=True, dataset='cifar100'):
+    def __init__(self, root, preset='microbatch', device='auto', initialize=True, dataset='cifar100', scoring_mode='hybrid'):
         import tkinter as tk
         from tkinter import ttk
 
@@ -183,6 +190,8 @@ class ShowcaseApp:
         self.pending_walkthrough = False
         self.stage_photo_refs = []
         self.stage_cards = []
+        self._scoring_labels = list(SCORING_MODES.values())
+        self._label_to_scoring = {label: key for key, label in SCORING_MODES.items()}
 
         root.title('TACS Two-Stage - Demo trực quan CIFAR-100 / Caltech-101 (checkpoint thật)')
         root.geometry('1280x860')
@@ -217,7 +226,9 @@ class ShowcaseApp:
         self.row_explain = tk.StringVar(value='Bấm từng hàng trong bảng bên dưới để xem cách chọn context và Top-5 tương ứng.')
         self.candidate_detail = tk.StringVar(value='Bấm vào bất kỳ ảnh ứng viên nào ở Giai đoạn 1 hoặc 2 để xem điểm số chi tiết.')
         self.stage1_note = tk.StringVar(value='Chưa chạy suy luận.')
-        self.narration = tk.StringVar(value=step_narration(4, None, None, DATASETS[dataset]['title']))
+        self.stage2_note = tk.StringVar(value='Màu xanh dương = ảnh được chọn; hiển thị kèm norm ||e_c|| của từng ứng viên.')
+        self.scoring_choice = tk.StringVar(value=SCORING_MODES.get(scoring_mode, SCORING_MODES['hybrid']))
+        self.narration = tk.StringVar(value=step_narration(4, None, None, DATASETS[dataset]['title'], scoring_mode))
         self.verdict_text = tk.StringVar(value=summarize_outcome(None)[1])
         self.preset = tk.StringVar(value=preset)
         self.dataset_choice = tk.StringVar(value=dataset)
@@ -319,6 +330,16 @@ class ShowcaseApp:
 
         controls_right = tk.Frame(row2, bg='#f8fafc')
         controls_right.pack(side='right', padx=6, pady=5)
+        tk.Label(controls_right, text='Chấm điểm GĐ2:', bg='#f8fafc', fg='#334155', font=('Segoe UI', 9, 'bold')).pack(side='left', padx=(0, 4))
+        self.scoring_box = ttk.Combobox(
+            controls_right,
+            values=self._scoring_labels,
+            textvariable=self.scoring_choice,
+            state='readonly',
+            width=26,
+        )
+        self.scoring_box.pack(side='left', padx=(0, 6))
+        self.scoring_box.bind('<<ComboboxSelected>>', self.scoring_changed)
         self.run_button = ttk.Button(controls_right, text='So sánh dự đoán', style='Accent.TButton', command=self.predict)
         self.run_button.pack(side='left', padx=(0, 4))
         self.walk_button = ttk.Button(controls_right, text='Xem từng bước', command=self.start_walkthrough)
@@ -584,7 +605,7 @@ class ShowcaseApp:
         ).pack(side='left')
         tk.Label(
             s2_head,
-            text='Màu xanh dương = ảnh Selector chọn; so "từ GĐ1 #k" để thấy Selector đảo hạng so với cosine.',
+            textvariable=self.stage2_note,
             font=('Segoe UI', 8),
             bg='#ffffff',
             fg='#475569',
@@ -684,11 +705,22 @@ class ShowcaseApp:
         text.configure(state='disabled')
         ttk.Button(win, text='Đóng', command=win.destroy).pack(pady=8)
 
+    def current_scoring_mode(self):
+        return self._label_to_scoring.get(self.scoring_choice.get(), 'hybrid')
+
+    def scoring_changed(self, event=None):
+        if self.busy:
+            return
+        self._refresh_pipeline_strip()
+        if self.engine is not None and self.image is not None and self.report is not None:
+            self.predict()
+
     def set_controls(self):
         ready = self.engine is not None and not self.busy
         self.reload_button.configure(state='disabled' if self.busy else 'normal')
         self.preset_box.configure(state='disabled' if self.busy else 'readonly')
         self.dataset_box.configure(state='disabled' if self.busy else 'readonly')
+        self.scoring_box.configure(state='disabled' if self.busy else 'readonly')
         for button in [self.validation_button, self.file_button, *self.example_buttons]:
             button.configure(state='normal' if ready else 'disabled')
         self.position_box.configure(state='normal' if ready else 'disabled')
@@ -757,7 +789,8 @@ class ShowcaseApp:
     def _refresh_pipeline_strip(self):
         title = DATASETS[self.dataset_choice.get()]['title']
         meta = self.engine.metadata if self.engine is not None else {'num_classes': DATASETS[self.dataset_choice.get()]['classes']}
-        payloads = pipeline_card_texts(self.report, self.query, meta, title)
+        mode = self.current_scoring_mode()
+        payloads = pipeline_card_texts(self.report, self.query, meta, title, scoring_mode=mode)
         for idx, (card, data) in enumerate(zip(self.stage_cards, payloads), start=1):
             active = (self.report is not None and idx == self.active_step) or (self.report is None and idx == 1 and self.query is not None)
             bg = '#dbeafe' if active else '#ffffff'
@@ -767,7 +800,7 @@ class ShowcaseApp:
             card['title'].configure(text=data['title'], bg=bg, fg='#1e3a8a' if active else '#334155')
             card['metric'].configure(text=data['metric'], bg=bg, fg='#0f172a')
             card['detail'].configure(text=data['detail'], bg=bg, fg='#334155' if active else '#64748b')
-        self.narration.set(step_narration(self.active_step, self.report, self.query, title))
+        self.narration.set(step_narration(self.active_step, self.report, self.query, title, scoring_mode=mode))
 
         # Highlight Stage 1 / Stage 2 boxes when inspecting step 2 or 3
         if hasattr(self, 'stage1_box'):
@@ -892,13 +925,16 @@ class ShowcaseApp:
         if self.busy or self.engine is None or self.image is None:
             return
         self.busy = True
+        scoring_mode = self.current_scoring_mode()
         self.clear_results()
-        self.status.set('Đang chạy GĐ1 (Retrieval) -> GĐ2 (Selector) -> GĐ3 (Task Network), không cập nhật trọng số...')
+        self.status.set(
+            f'Đang chạy GĐ1 (Retrieval) -> GĐ2 ({scoring_mode_label(scoring_mode)}) -> GĐ3 (Task Network), không cập nhật trọng số...'
+        )
         engine, image, query = self.engine, self.image.copy(), dict(self.query)
 
         def worker():
             try:
-                self.events.put(('result', make_report(engine, image, query)))
+                self.events.put(('result', make_report(engine, image, query, scoring_mode=scoring_mode)))
             except Exception as exc:
                 self.events.put(('error', str(exc)))
 
@@ -997,26 +1033,37 @@ class ShowcaseApp:
             return
 
         sel_rank1 = (self.report.get('pipeline') or {}).get('selected_stage1_rank')
-        sel_label = (self.report.get('results', {}).get('selected') or {}).get('context_label', '')
+        sel_mode = self.report.get('scoring_mode') or 'dot'
+        sel_item = self.report.get('results', {}).get('selected') or {}
+        sel_label = sel_item.get('context_label', '')
+        sel_norm = sel_item.get('selector_norm')
+        sel_npct = sel_item.get('norm_percentile')
         if sel_rank1 is not None and sel_rank1 > 8:
             self.stage1_note.set(
-                f'Ảnh Selector chọn ("{sel_label}") ở hạng #{sel_rank1}/32 ở GĐ1 (ngoài Top-8) -> được đẩy lên #1 ở GĐ2!'
+                f'Ảnh chọn ở GĐ2 ("{sel_label}") ở hạng #{sel_rank1}/32 ở GĐ1 (ngoài Top-8) -> được đẩy lên #1 ở GĐ2!'
             )
         elif sel_rank1 is not None:
             self.stage1_note.set(
-                f'Ảnh Selector chọn ("{sel_label}") nằm ở hạng #{sel_rank1}/32 ở GĐ1 -> lên #1 ở GĐ2.'
+                f'Ảnh chọn ở GĐ2 ("{sel_label}") nằm ở hạng #{sel_rank1}/32 ở GĐ1 -> lên #1 ở GĐ2.'
             )
         else:
             self.stage1_note.set('')
 
-        self._populate_gallery_row(self.stage1_grid, stage1, mode='stage1')
-        self._populate_gallery_row(self.stage2_grid, stage2, mode='stage2')
+        if isinstance(sel_norm, (int, float)) and isinstance(sel_npct, (int, float)):
+            self.stage2_note.set(
+                f'Chế độ: {scoring_mode_label(sel_mode)} | Ảnh chọn ||e_c||={sel_norm:.2f} (norm P{sel_npct * 100:.0f} trong Top-32)'
+            )
+        else:
+            self.stage2_note.set(f'Chế độ: {scoring_mode_label(sel_mode)}')
+
+        self._populate_gallery_row(self.stage1_grid, stage1, mode='stage1', scoring_mode=sel_mode)
+        self._populate_gallery_row(self.stage2_grid, stage2, mode='stage2', scoring_mode=sel_mode)
 
         # Auto-show selected candidate details in inspector
         selected_cand = next((c for c in stage2 if c.get('is_selected')), stage2[0])
         self._inspect_candidate(selected_cand)
 
-    def _populate_gallery_row(self, container, items, mode):
+    def _populate_gallery_row(self, container, items, mode, scoring_mode='dot'):
         tk = self.tk
         from PIL import Image, ImageTk
 
@@ -1054,11 +1101,11 @@ class ShowcaseApp:
                     pady=0,
                 ).pack(side='right')
 
-            img_holder = tk.Frame(card, bg='#ffffff', width=116, height=82)
+            img_holder = tk.Frame(card, bg='#ffffff', width=116, height=78)
             img_holder.pack(pady=3)
             img_holder.pack_propagate(False)
             raw = self.engine.raw_image(cand['dataset_index'])
-            scale = min(112 / raw.width, 78 / raw.height)
+            scale = min(112 / raw.width, 74 / raw.height)
             thumb = raw.resize(
                 (max(1, round(raw.width * scale)), max(1, round(raw.height * scale))),
                 Image.Resampling.NEAREST if raw.size == (32, 32) else Image.Resampling.LANCZOS,
@@ -1072,30 +1119,48 @@ class ShowcaseApp:
             short = lbl if len(lbl) <= 15 else lbl[:13] + '..'
             lbl_w = tk.Label(card, text=short, font=('Segoe UI', 8, 'bold'), bg=bg_color, fg='#0f172a')
             lbl_w.pack()
+            norm_val = cand.get('selector_norm')
+            norm_str = f' | ‖e‖={norm_val:.1f}' if isinstance(norm_val, (int, float)) else ''
             if mode == 'stage1':
                 meta_txt = f"cos={cand['cosine_score']:.3f} | GĐ2 #{cand['stage2_rank']}"
             else:
-                meta_txt = f"điểm={cand['selector_score']:.2f} | GĐ1 #{cand['stage1_rank']}"
+                meta_txt = f"{format_stage2_score(cand.get('selector_score'), scoring_mode)} | GĐ1 #{cand['stage1_rank']}"
             meta_w = tk.Label(card, text=meta_txt, font=('Segoe UI', 8), bg=bg_color, fg='#475569')
             meta_w.pack()
+            sub_txt = f"norm={norm_val:.1f} (P{cand.get('norm_percentile', 0) * 100:.0f})" if isinstance(norm_val, (int, float)) else ''
+            sub_w = tk.Label(card, text=sub_txt, font=('Segoe UI', 8), bg=bg_color, fg='#64748b')
+            sub_w.pack()
 
-            for w in (card, top_row, img_holder, img_lbl, lbl_w, meta_w):
+            for w in (card, top_row, img_holder, img_lbl, lbl_w, meta_w, sub_w):
                 w.bind('<Button-1>', lambda e, c=cand: self._inspect_candidate(c))
 
     def _inspect_candidate(self, cand):
         roles = []
         if cand.get('is_selected'):
-            roles.append('ĐƯỢC SELECTOR CHỌN (GĐ2 #1)')
+            roles.append('ĐƯỢC CHỌN Ở GĐ2 (#1)')
         if cand.get('is_frozen_top1'):
             roles.append('Gần nhất theo Frozen Cosine (GĐ1 #1)')
         if cand.get('is_random'):
             roles.append('Mẫu Random trong top-32 (seed 44)')
         role_txt = ', '.join(roles) if roles else 'Ứng viên trong Top-32'
+        mode = (self.report or {}).get('scoring_mode', 'dot')
+        dot_val = cand.get('selector_dot_score', cand.get('selector_score', 0.0))
+        sel_cos = cand.get('selector_cosine_score')
+        norm_val = cand.get('selector_norm')
+        norm_pct = cand.get('norm_percentile')
+        dot_rank = cand.get('dot_rank')
+        sel_cos_str = f'{sel_cos:.4f}' if isinstance(sel_cos, (int, float)) else '-'
+        norm_str = (
+            f'{norm_val:.2f} (percentile {norm_pct * 100:.1f}% trong Top-32)'
+            if isinstance(norm_val, (int, float)) and isinstance(norm_pct, (int, float))
+            else '-'
+        )
+        dot_rank_str = f' | hạng dot-product gốc: #{dot_rank}/32' if dot_rank is not None else ''
         self.candidate_detail.set(
-            f"Ứng viên: {cand['label']} (Dataset ID={cand['dataset_index']}, Pool pos={cand['pool_position']})\n"
-            f"Giai đoạn 1 (Frozen DINOv3 cosine): hạng #{cand['stage1_rank']}/32 | cosine = {cand['cosine_score']:.4f}\n"
-            f"Giai đoạn 2 (Learned Selector):     hạng #{cand['stage2_rank']}/32 | dot-product score = {cand['selector_score']:.4f}\n"
-            f"Vai trò trong bảng đối chứng:       {role_txt}"
+            f"Ứng viên: {cand['label']} (Dataset ID={cand['dataset_index']}, Pool pos={cand['pool_position']}) | Vai trò: {role_txt}\n"
+            f"GĐ1 (Frozen DINOv3 cosine): hạng #{cand['stage1_rank']}/32 | cosine = {cand['cosine_score']:.4f}\n"
+            f"GĐ2 ({scoring_mode_label(mode)}): hạng #{cand['stage2_rank']}/32 | điểm đang dùng = {format_stage2_score(cand.get('selector_score'), mode)}{dot_rank_str}\n"
+            f"Chi tiết điểm & norm: dot gốc = {dot_val:.2f} | selector cosine (L2) = {sel_cos_str} | ||e_c|| = {norm_str}"
         )
 
     def _populate_evidence_tab(self):
@@ -1106,6 +1171,8 @@ class ShowcaseApp:
         query = self.report.get('query') or {}
         lines = [
             f"Dataset: {meta.get('dataset', 'cifar100')} | Preset: {meta.get('preset', '-')} | Device: {meta.get('device', '-')} | AMP: {meta.get('amp')}",
+            f"Chế độ chấm điểm GĐ2: {scoring_mode_label(self.report.get('scoring_mode'))} ({self.report.get('scoring_mode', 'dot')})",
+            f"Mô tả chế độ: {SCORING_MODE_DETAILS.get(self.report.get('scoring_mode', 'dot'), '')}",
             f"Protocol: {meta.get('protocol', 'cifar100_seed42')} | Pool size: {meta.get('candidate_count', '-')}",
             f"Two-Stage checkpoint SHA256:  {meta.get('checkpoint_sha256', '-')}",
         ]
@@ -1227,9 +1294,16 @@ class ShowcaseApp:
             rank_txt = candidate_rank_text(item)
             cos_v = item.get('cosine_score')
             sel_v = item.get('selector_score')
-            score_line = ''
-            if isinstance(cos_v, (int, float)) and isinstance(sel_v, (int, float)):
-                score_line = f' | cos={cos_v:.3f}, sel={sel_v:.2f}'
+            norm_v = item.get('selector_norm')
+            mode = self.report.get('scoring_mode', 'dot')
+            parts = []
+            if isinstance(cos_v, (int, float)):
+                parts.append(f'cos1={cos_v:.3f}')
+            if isinstance(sel_v, (int, float)):
+                parts.append(format_stage2_score(sel_v, mode))
+            if isinstance(norm_v, (int, float)):
+                parts.append(f'norm={norm_v:.1f}')
+            score_line = (' | ' + ', '.join(parts)) if parts else ''
             self.context_caption.set(
                 f"{item['context_label']} (ID={item['context_index']})\n{rank_txt}{score_line}"
             )
@@ -1263,6 +1337,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dataset', choices=list(DATASETS), default='cifar100')
     parser.add_argument('--preset', choices=[*PRESETS, 'full100'])
+    parser.add_argument('--scoring-mode', choices=list(SCORING_MODES), default='hybrid')
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--validation-position', type=int, default=0)
@@ -1281,7 +1356,7 @@ def main():
                 raise ValueError(f'Validation position phải trong 0..{size - 1}')
             engine = create_engine(args.preset, args.device, dataset=args.dataset)
             image, query = validation_input(engine, args.validation_position)
-            result = make_report(engine, image, query)
+            result = make_report(engine, image, query, scoring_mode=args.scoring_mode)
             if args.output:
                 write_report(args.output, result)
             print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -1290,7 +1365,14 @@ def main():
             root = tk.Tk()
             if args.check_ui:
                 root.withdraw()
-            ShowcaseApp(root, args.preset, args.device, initialize=not args.check_ui, dataset=args.dataset)
+            ShowcaseApp(
+                root,
+                args.preset,
+                args.device,
+                initialize=not args.check_ui,
+                dataset=args.dataset,
+                scoring_mode=args.scoring_mode,
+            )
             if args.check_ui:
                 root.update_idletasks()
                 root.destroy()

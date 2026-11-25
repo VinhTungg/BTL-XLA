@@ -12,6 +12,9 @@ from tacs.showcase.__main__ import (
     PRESETS, ROOT, external_input, make_report, settings_for, validation_input, write_report,
 )
 from tacs.showcase.explain import (
+    HOW_IT_WORKS_TEXT,
+    SCORING_MODES,
+    SCORING_MODE_DETAILS,
     candidate_badges,
     candidate_rank_text,
     pipeline_card_texts,
@@ -161,6 +164,17 @@ class ShowcaseTest(unittest.TestCase):
         self.assertEqual(tone, 'help')
         self.assertIn('CÓ LỢI', text)
         self.assertIn('No-context train riêng', text)
+        self.assertEqual(list(SCORING_MODES)[0], 'hybrid')
+        for mode_key in ('hybrid', 'cosine'):
+            report['scoring_mode'] = mode_key
+            summary_txt = summarize_outcome(report)[1]
+            self.assertNotIn('Chẩn đoán', summary_txt)
+            self.assertNotIn('không train lại', summary_txt.lower())
+        self.assertNotIn('chẩn đoán', HOW_IT_WORKS_TEXT.lower())
+        self.assertNotIn('không train lại', HOW_IT_WORKS_TEXT.lower())
+        for detail in SCORING_MODE_DETAILS.values():
+            self.assertNotIn('chẩn đoán', detail.lower())
+            self.assertNotIn('không train lại', detail.lower())
 
         s1, s2 = top_stage_candidates(report, limit=8)
         self.assertEqual([c['label'] for c in s1], ['guitar', 'accordion'])
@@ -196,28 +210,48 @@ class ShowcaseTest(unittest.TestCase):
         engine.metadata = {'dataset': 'unit'}
         engine.standard = lambda q: torch.tensor([[1.0, 0.0]])
         engine.frozen = torch.tensor([[0.9, 0.1], [0.5, 0.5], [0.8, 0.2], [0.1, 0.9]])
-        engine.selector = torch.zeros(4, 2)
+        engine.selector = torch.tensor([
+            [1.0, 0.0],    # pool 0 (Stage1 #1, cos=0.99): aligned direction, norm=1
+            [0.6, 0.8],    # pool 1 (Stage1 #3): partial direction, norm=1
+            [5.0, 8.66],   # pool 2 (Stage1 #2): huge norm=10, lower cosine=0.5 with query [1,0]
+            [0.0, 1.0],    # pool 3 (not in top-3)
+        ])
 
         def fake_selector(q, bank):
-            scores = torch.tensor([[1.0, 9.0, 3.0]])
-            weights = torch.tensor([[0.0, 1.0, 0.0]])
-            return scores, weights, torch.zeros(1, 2), torch.zeros(1, 2)
+            q_emb = torch.tensor([[1.0, 0.0]])
+            scores = torch.einsum('bd,bnd->bn', q_emb, bank)
+            idx = scores.argmax(dim=-1)
+            weights = torch.nn.functional.one_hot(idx, num_classes=bank.shape[1]).float()
+            return scores, weights, q_emb, torch.zeros(1, 2)
 
         engine.model = SimpleNamespace(
             selector=SimpleNamespace(forward_embedding_bank=fake_selector),
             task_network=lambda q, ctx=None: torch.tensor([[0.2, 2.0, 0.1, -0.5, 0.0]]),
         )
-        out = engine.predict(Image.new('RGB', (4, 4)), random_seed=44)
-        self.assertIn('pipeline', out)
-        self.assertEqual(out['pipeline']['pool_size'], 4)
-        self.assertEqual(out['pipeline']['topk_count'], 3)
-        # Stage 1 cosine top-3 positions: 0 (highest), 2 (second), 1 (third).
-        # Selector picks local index 1 -> pool_position 2 -> dataset_index 2 -> 'bird', stage1_rank=2, stage2_rank=1.
-        self.assertEqual(out['results']['selected']['context_label'], 'bird')
-        self.assertEqual(out['results']['selected']['stage1_rank'], 2)
-        self.assertEqual(out['results']['selected']['stage2_rank'], 1)
-        self.assertEqual(out['results']['frozen_cosine']['stage1_rank'], 1)
-        self.assertEqual(len(out['pipeline']['candidates']), 3)
+        # Under raw dot-product, pool 2 ('bird') wins because of its huge norm (10.0) despite lower cosine (0.5).
+        out_dot = engine.predict(Image.new('RGB', (4, 4)), random_seed=44, scoring_mode='dot')
+        self.assertEqual(out_dot['scoring_mode'], 'dot')
+        self.assertEqual(out_dot['pipeline']['pool_size'], 4)
+        self.assertEqual(out_dot['pipeline']['topk_count'], 3)
+        self.assertEqual(out_dot['results']['selected']['context_label'], 'bird')
+        self.assertEqual(out_dot['results']['selected']['stage1_rank'], 2)
+        self.assertEqual(out_dot['results']['selected']['stage2_rank'], 1)
+        self.assertAlmostEqual(out_dot['results']['selected']['norm_percentile'], 1.0)
+        self.assertEqual(out_dot['results']['frozen_cosine']['stage1_rank'], 1)
+
+        # Under selector cosine (L2-normalized), pool 0 ('cat') wins because norm bias is removed!
+        out_cos = engine.predict(Image.new('RGB', (4, 4)), random_seed=44, scoring_mode='cosine')
+        self.assertEqual(out_cos['scoring_mode'], 'cosine')
+        self.assertEqual(out_cos['results']['selected']['context_label'], 'cat')
+        self.assertEqual(out_cos['results']['selected']['stage1_rank'], 1)
+        self.assertEqual(out_cos['results']['selected']['stage2_rank'], 1)
+        self.assertAlmostEqual(out_cos['results']['selected']['selector_cosine_score'], 1.0, places=4)
+
+        # Hybrid also picks 'cat' cleanly and rejects unknown scoring modes.
+        out_hyb = engine.predict(Image.new('RGB', (4, 4)), random_seed=44, scoring_mode='hybrid')
+        self.assertEqual(out_hyb['results']['selected']['context_label'], 'cat')
+        with self.assertRaisesRegex(ValueError, 'scoring_mode'):
+            engine.predict(Image.new('RGB', (4, 4)), scoring_mode='invalid')
 
 
 if __name__ == '__main__':

@@ -128,7 +128,9 @@ class DemoEngine:
             torch.cuda.synchronize(self.device)
 
     @torch.no_grad()
-    def predict(self, image, random_seed=44):
+    def predict(self, image, random_seed=44, scoring_mode='dot'):
+        if scoring_mode not in ('dot', 'cosine', 'hybrid'):
+            raise ValueError(f'Unsupported scoring_mode: {scoring_mode}')
         query = self.transform(image.convert('RGB')).unsqueeze(0).to(self.device)
         self._sync()
         start = time.perf_counter()
@@ -145,7 +147,26 @@ class DemoEngine:
             choice = self.model.selector.forward_embedding_bank(query, self.selector[topk])
         if not bool(torch.isfinite(choice[0]).all()):
             raise ValueError('Non-finite selector scores')
-        local = int(choice[1].argmax(-1))
+        # Compute candidate norms and L2-normalized selector cosine in FP32 for diagnostics/rescoring.
+        cand_embs = self.selector[topk][0].float()
+        query_emb = choice[2][0].float()
+        cand_norms = cand_embs.norm(dim=-1)
+        query_norm = float(query_emb.norm(dim=-1).item())
+        if not bool(torch.isfinite(cand_norms).all()) or bool((cand_norms == 0).any()) or query_norm == 0.0:
+            raise ValueError('Non-finite/zero selector embedding norm')
+        raw_dot = choice[0][0].float()
+        sel_cosine = (F.normalize(query_emb.unsqueeze(0), dim=-1) @ F.normalize(cand_embs, dim=-1).T)[0]
+        frozen_cos = cosine_values[0].float()
+        if scoring_mode == 'dot':
+            # Preserve exact checkpoint AMP argmax selection for faithful default mode.
+            local = int(choice[1].argmax(-1))
+            active_scores = raw_dot
+        elif scoring_mode == 'cosine':
+            active_scores = sel_cosine
+            local = int(active_scores.argmax(-1))
+        else:
+            active_scores = 0.5 * frozen_cos + 0.5 * sel_cosine
+            local = int(active_scores.argmax(-1))
         selected = int(topk[0, local])
         self._sync()
         selected_at = time.perf_counter()
@@ -170,28 +191,44 @@ class DemoEngine:
                               for i, p in zip(labels[0], probabilities[0])],
                         task_ms=1000*(time.perf_counter()-t), context_index=None,
                         context_label=None, stage1_rank=None, stage2_rank=None,
-                        cosine_score=None, selector_score=None)
+                        cosine_score=None, selector_score=None,
+                        selector_dot_score=None, selector_cosine_score=None,
+                        selector_norm=None, norm_percentile=None)
             if position is not None:
                 index = self.split.candidate_pool[position]
                 item.update(context_index=index, context_label=self.dataset.classes[self.dataset.targets[index]])
             results[name] = item
         comparison_ms = 1000*(time.perf_counter()-start)
-        # Build Stage 1 -> Stage 2 candidate trace from already-computed scores without altering inference.
+        # Build Stage 1 -> Stage 2 candidate trace from already-computed embeddings/scores.
         topk_positions = [int(x) for x in topk[0].detach().cpu().tolist()]
-        cos_list = [float(x) for x in cosine_values[0].detach().cpu().tolist()]
-        sel_list = [float(x) for x in choice[0][0].float().detach().cpu().tolist()]
-        order_stage2 = sorted(range(len(topk_positions)), key=lambda i: (-sel_list[i], i))
+        cos_list = [float(x) for x in frozen_cos.detach().cpu().tolist()]
+        dot_list = [float(x) for x in raw_dot.detach().cpu().tolist()]
+        sel_cos_list = [float(x) for x in sel_cosine.detach().cpu().tolist()]
+        active_list = [float(x) for x in active_scores.detach().cpu().tolist()]
+        norm_list = [float(x) for x in cand_norms.detach().cpu().tolist()]
+        k_count = len(topk_positions)
+        order_stage2 = sorted(range(k_count), key=lambda i: (0 if i == local else 1, -active_list[i], i))
         stage2_ranks = {idx: rank for rank, idx in enumerate(order_stage2, start=1)}
+        order_dot = sorted(range(k_count), key=lambda i: (-dot_list[i], i))
+        dot_ranks = {idx: rank for rank, idx in enumerate(order_dot, start=1)}
         candidates = []
-        for idx, (pool_pos, cos_val, sel_val) in enumerate(zip(topk_positions, cos_list, sel_list)):
+        for idx in range(k_count):
+            pool_pos = topk_positions[idx]
             dataset_index = int(self.split.candidate_pool[pool_pos])
+            norm_val = norm_list[idx]
+            norm_pct = sum(1 for v in norm_list if v <= norm_val) / k_count
             candidates.append(dict(
                 pool_position=pool_pos,
                 dataset_index=dataset_index,
                 label=self.dataset.classes[self.dataset.targets[dataset_index]],
-                cosine_score=cos_val,
+                cosine_score=cos_list[idx],
                 stage1_rank=idx + 1,
-                selector_score=sel_val,
+                selector_score=active_list[idx],
+                selector_dot_score=dot_list[idx],
+                selector_cosine_score=sel_cos_list[idx],
+                selector_norm=norm_val,
+                norm_percentile=norm_pct,
+                dot_rank=dot_ranks[idx],
                 stage2_rank=stage2_ranks[idx],
                 is_selected=(idx == local),
                 is_frozen_top1=(idx == 0),
@@ -204,15 +241,24 @@ class DemoEngine:
                 stage2_rank=cand['stage2_rank'],
                 cosine_score=cand['cosine_score'],
                 selector_score=cand['selector_score'],
+                selector_dot_score=cand['selector_dot_score'],
+                selector_cosine_score=cand['selector_cosine_score'],
+                selector_norm=cand['selector_norm'],
+                norm_percentile=cand['norm_percentile'],
             )
         pipeline = dict(
             pool_size=len(self.pool),
-            topk_count=len(candidates),
+            topk_count=k_count,
+            scoring_mode=scoring_mode,
+            query_selector_norm=query_norm,
             selected_stage1_rank=local + 1,
+            selected_dot_rank=dot_ranks[local],
+            selected_norm_percentile=candidates[local]['norm_percentile'],
             random_stage1_rank=random_local + 1,
             candidates=candidates,
         )
         return dict(metadata=self.metadata, results=results, pipeline=pipeline,
+                    scoring_mode=scoring_mode,
                     retrieval_ms=1000*(retrieved_at-start), selector_ms=1000*(selected_at-retrieved_at),
                     comparison_ms=comparison_ms,
                     warning='Same task weights, not independently trained baselines. Confidence is not calibrated. Batch=1 demo timing is not a formal benchmark.')

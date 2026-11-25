@@ -100,8 +100,9 @@ class CaltechDemoEngine(DemoEngine):
         return self.raw_image(index),self.dataset.classes[self.dataset.targets[index]]
 
     @torch.no_grad()
-    def predict(self,image,random_seed=44):
-        report=super().predict(image,random_seed)
+    def predict(self,image,random_seed=44,scoring_mode='dot'):
+        report=(super().predict(image,random_seed) if scoring_mode=='dot'
+                else super().predict(image,random_seed,scoring_mode=scoring_mode))
         for item in report['results'].values():
             item['checkpoint_sha256']=CHECKPOINTS['two_stage']
             item['model_group']='two_stage_intervention'
@@ -120,6 +121,7 @@ class CaltechDemoEngine(DemoEngine):
                   for i,p in zip(labels[0],probabilities[0])],
             task_ms=elapsed,context_index=None,context_label=None,
             stage1_rank=None,stage2_rank=None,cosine_score=None,selector_score=None,
+            selector_dot_score=None,selector_cosine_score=None,selector_norm=None,norm_percentile=None,
             checkpoint_sha256=CHECKPOINTS['no_context'],model_group='independent_no_context')
         report['comparison_ms']+=elapsed
         report['warning']=('First four rows intervene on the same Two-Stage task weights; '

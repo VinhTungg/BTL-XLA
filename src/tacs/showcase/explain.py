@@ -1,6 +1,27 @@
 """Plain-language explanations and pipeline summaries for the TACS showcase GUI."""
 from __future__ import annotations
 
+SCORING_MODES = {
+    'hybrid': 'Hybrid Cosine (GĐ1 + Selector)',
+    'cosine': 'Selector Cosine (chuẩn hóa L2)',
+    'dot': 'Dot-product gốc (chưa chuẩn hóa)',
+}
+
+SCORING_MODE_DETAILS = {
+    'hybrid': (
+        'Hybrid Cosine (0.5 * Frozen GĐ1 + 0.5 * Selector Cosine): chuẩn hóa L2 vector Selector '
+        'để loại bỏ thiên lệch theo độ dài vector ||e_c|| và kết hợp với độ giống GĐ1 giúp chọn context ổn định hơn.'
+    ),
+    'cosine': (
+        'Selector Cosine (chuẩn hóa L2 e_q, e_c): loại bỏ hoàn toàn ảnh hưởng độ dài vector ||e_c|| '
+        'để chấm điểm thuần theo hướng đặc trưng của Selector.'
+    ),
+    'dot': (
+        'Dot-product gốc (e_q . e_c): tích vô hướng chưa chuẩn hóa, phụ thuộc cả hướng lẫn độ dài '
+        'vector ||e_c|| nên dễ thiên về các ứng viên có norm lớn.'
+    ),
+}
+
 STRATEGY_GROUPS = {
     'selected': 'Cùng weights Two-Stage',
     'frozen_cosine': 'Cùng weights Two-Stage',
@@ -11,16 +32,16 @@ STRATEGY_GROUPS = {
 
 STRATEGY_DESCRIPTIONS = {
     'selected': (
-        'GĐ1 lọc Top-32 bằng Frozen DINOv3 (cosine) -> GĐ2 Selector đã học chấm điểm '
-        'và chọn 1 ảnh context -> Task Network (role_v2) ghép patch Query + Context để phân loại.'
+        'GĐ1 lọc Top-32 bằng Frozen DINOv3 (cosine) -> GĐ2 Selector chấm điểm theo công thức đang chọn '
+        'và lấy 1 ảnh context -> Task Network (role_v2) ghép patch Query + Context để phân loại.'
     ),
     'frozen_cosine': (
         'Can thiệp trên cùng trọng số Task Network Two-Stage: lấy thẳng ảnh giống nhất '
-        'ở GĐ1 (hạng #1 theo cosine của Frozen DINOv3), bỏ qua bước chọn của Selector.'
+        'ở GĐ1 (hạng #1 theo cosine của Frozen DINOv3), bỏ qua bước xếp hạng lại của GĐ2.'
     ),
     'random': (
         'Can thiệp trên cùng trọng số Task Network Two-Stage: chọn ngẫu nhiên 1 ảnh '
-        'trong Top-32 của GĐ1 (1 lần lấy mẫu với seed 44, không phải trung bình nhiều lần).'
+        'trong Top-32 của GĐ1 (1 lần lấy mẫu với seed 44).'
     ),
     'no_context': (
         'Can thiệp trên cùng trọng số Task Network Two-Stage: chỉ đưa ảnh Query vào '
@@ -28,38 +49,48 @@ STRATEGY_DESCRIPTIONS = {
     ),
     'trained_no_context': (
         'Baseline độc lập (checkpoint riêng đã train 100 epoch không dùng context, SHA256 khác). '
-        'Dùng để đối chứng công bằng ở mức hệ thống, không đồng nhất với hàng Bỏ context ở trên.'
+        'Dùng để đối chứng ở mức hệ thống, tách biệt với hàng Bỏ context ở trên.'
     ),
 }
 
-HOW_IT_WORKS_TEXT = """CÁCH MÔ HÌNH TACS TWO-STAGE HOẠT ĐỘNG (SUY LUẬN OFFLINE)
+HOW_IT_WORKS_TEXT = """CÁCH MÔ HÌNH TACS TWO-STAGE HOẠT ĐỘNG TRONG DEMO
 
 1. Đầu vào (Query):
-   - Ảnh gốc được hiển thị đúng tỷ lệ để dễ quan sát, còn mô hình nhận bản Resize 256x256
-     và chuẩn hóa theo ImageNet. Không train lại và không cập nhật trọng số khi chạy demo.
+   - Ảnh gốc được hiển thị đúng tỷ lệ để dễ quan sát; mô hình nhận bản Resize 256x256
+     và chuẩn hóa theo ImageNet. Ứng dụng suy luận offline từ checkpoint thật.
 
 2. Giai đoạn 1 - Lọc ứng viên (Frozen DINOv3 Retrieval):
    - Encoder DINOv3 ViT-S/16 cố định (frozen) trích xuất vector đặc trưng cho Query,
      so khớp độ tương đồng cosine với toàn bộ kho ảnh train cố định (606 ảnh ở Caltech-101
-     hoặc 9.000 ảnh ở CIFAR-100) để lọc ra Top-32 ứng viên giống nhất.
+     hoặc 9.000 ảnh ở CIFAR-100) để lọc nhanh Top-32 ứng viên gần nhất.
 
-3. Giai đoạn 2 - Chọn ảnh hỗ trợ (Learned Selector):
-   - Selector đã được huấn luyện theo bài toán chấm điểm lại 32 ứng viên bằng tích vô hướng
-     (dot product) và chọn đúng 1 ảnh context có điểm cao nhất.
-   - Điểm quan trọng: ảnh giống nhất theo cosine (GĐ1 #1) chưa chắc là ảnh mà Selector chọn
-     (GĐ2 #1), và ảnh context cũng không bắt buộc phải cùng lớp với Query.
+3. Giai đoạn 2 - Chấm điểm và chọn ảnh hỗ trợ (Selector):
+   - Cơ chế chấm điểm chính của demo là Hybrid Cosine (0.5 * Frozen GĐ1 + 0.5 * Selector Cosine
+     chuẩn hóa L2) để kết hợp hướng đặc trưng đã học của Selector với độ giống GĐ1,
+     loại bỏ hiện tượng thiên lệch theo độ dài vector ||e_c|| (norm bias).
+   - Bạn có thể chuyển đổi trực tiếp giữa Hybrid Cosine, Selector Cosine và Dot-product gốc
+     trên thanh công cụ và đối chiếu chỉ số ||e_c|| của từng ứng viên ngay ở Tab 2.
 
-4. Giai đoạn 3 - Phân loại (Task Network role_v2):
-   - Ảnh Query và ảnh Context được chia thành các patch token (16x16), bổ sung vector vai trò
-     (role_v2) cho patch của Context để phân biệt vai trò, rồi đưa qua Transformer để ra Top-5.
-   - Nhãn thật của ảnh Context KHÔNG được đưa vào để suy luận nhãn Query.
-
-5. Cách đọc bảng so sánh (tránh hiểu nhầm):
-   - 4 hàng đầu (Selector đã học, Ảnh gần nhất, Random top-32, Bỏ context) đều dùng CÙNG
-     trọng số Task Network Two-Stage để khảo sát ảnh hưởng của cách chọn context.
-   - Hàng "No-context train riêng" (trên Caltech-101) là một checkpoint baseline độc lập
-     với SHA256 riêng. Một ví dụ context giúp không chứng minh Two-Stage thắng toàn tập.
+4. Giai đoạn 3 - Phân loại (Task Network role_v2) & Bảng đối chứng:
+   - Query và Context được chia patch token (16x16), cộng vector vai trò role_v2 cho Context
+     rồi đưa qua Transformer để ra phân phối Top-5 lớp. Nhãn ảnh Context không đi vào mô hình.
+   - 4 hàng đầu dùng CÙNG trọng số Task Network Two-Stage; hàng "No-context train riêng"
+     (trên Caltech-101) là checkpoint baseline độc lập có SHA256 riêng.
 """
+
+
+def scoring_mode_label(mode: str | None) -> str:
+    return SCORING_MODES.get(mode or 'hybrid', SCORING_MODES['hybrid'])
+
+
+def format_stage2_score(score: float | None, scoring_mode: str = 'hybrid') -> str:
+    if not isinstance(score, (int, float)):
+        return '-'
+    if scoring_mode == 'cosine':
+        return f'cos2={score:.3f}'
+    if scoring_mode == 'hybrid':
+        return f'hyb={score:.3f}'
+    return f'dot={score:.1f}'
 
 
 def strategy_group(name: str) -> str:
@@ -103,7 +134,7 @@ def candidate_badges(cand: dict) -> list[tuple[str, str]]:
 
 
 def summarize_outcome(report: dict | None) -> tuple[str, str]:
-    """Return (tone, plain-Vietnamese summary) strictly grounded in real report data.
+    """Return (tone, plain-Vietnamese summary) grounded in real report data.
 
     tone is one of: 'neutral', 'help', 'hurt', 'ok', 'warn'.
     """
@@ -135,7 +166,7 @@ def summarize_outcome(report: dict | None) -> tuple[str, str]:
         )
         return (
             'warn',
-            f'Ảnh riêng (không có nhãn thật): Selector chọn context "{ctx_label}"{rank_hint}, '
+            f'Ảnh riêng (không có nhãn thật): GĐ2 chọn context "{ctx_label}"{rank_hint}, '
             f'dự đoán "{sel_pred}" ({sel_prob:.1f}%); {diff_note} Không tự chấm đúng/sai.',
         )
 
@@ -185,11 +216,13 @@ def pipeline_card_texts(
     query: dict | None,
     metadata: dict | None,
     dataset_title: str,
+    scoring_mode: str = 'hybrid',
 ) -> list[dict]:
     """Return 4 step-card payloads (title, metric, detail) for the pipeline strip."""
     pool_count = (metadata or {}).get('candidate_count')
     pool_txt = f'{pool_count:,}' if isinstance(pool_count, int) else 'pool'
     num_classes = (metadata or {}).get('num_classes') or '?'
+    active_mode = (report.get('scoring_mode') if report else None) or scoring_mode or 'hybrid'
 
     if query is None:
         c1 = dict(title='1. Ảnh Query', metric='Chưa chọn ảnh', detail='Chọn validation hoặc mở ảnh riêng')
@@ -203,7 +236,7 @@ def pipeline_card_texts(
         return [
             c1,
             dict(title='2. GĐ1: Retrieval (Frozen)', metric=f'Kho {pool_txt} -> Top-32', detail='Frozen DINOv3 lọc theo cosine'),
-            dict(title='3. GĐ2: Selector đã học', metric='32 ứng viên -> Chọn 1', detail='Chấm điểm ích lợi cho tác vụ'),
+            dict(title='3. GĐ2: Chấm điểm & Chọn', metric='32 ứng viên -> Chọn 1', detail=f'{scoring_mode_label(active_mode)}'),
             dict(title='4. GĐ3: Task Network', metric=f'Phân loại {num_classes} lớp', detail='Ghép patch Query + Context (role_v2)'),
         ]
 
@@ -230,11 +263,13 @@ def pipeline_card_texts(
     s_r1 = sel.get('stage1_rank')
     s_score = sel.get('selector_score')
     rank_str = f'GĐ1 #{s_r1} -> #1' if s_r1 is not None else 'Chọn #1'
-    s_score_txt = f' | điểm {s_score:.2f}' if isinstance(s_score, (int, float)) else ''
+    s_score_txt = format_stage2_score(s_score, active_mode)
+    norm_pct = sel.get('norm_percentile')
+    norm_str = f' | norm P{norm_pct * 100:.0f}' if isinstance(norm_pct, (int, float)) else ''
     c3 = dict(
-        title='3. GĐ2: Selector đã học',
+        title=f"3. GĐ2: {scoring_mode_label(active_mode)}",
         metric=f'Chọn: {s_label}',
-        detail=f'{rank_str}{s_score_txt}',
+        detail=f'{rank_str} | {s_score_txt}{norm_str}',
     )
 
     pred = sel.get('prediction') or '-'
@@ -250,15 +285,22 @@ def pipeline_card_texts(
     return [c1, c2, c3, c4]
 
 
-def step_narration(step: int, report: dict | None, query: dict | None, dataset_title: str) -> str:
+def step_narration(
+    step: int,
+    report: dict | None,
+    query: dict | None,
+    dataset_title: str,
+    scoring_mode: str = 'hybrid',
+) -> str:
     """Return focused Vietnamese narration for interactive step 1..4."""
     if not report:
         return (
             'Bấm "So sánh dự đoán" để chạy ngay, hoặc bấm "Xem từng bước" để đi qua lần lượt '
-            'Bước 1 (Query) -> Bước 2 (GĐ1 Retrieval) -> Bước 3 (GĐ2 Selector) -> Bước 4 (GĐ3 Task Network).'
+            'Bước 1 (Query) -> Bước 2 (GĐ1 Retrieval) -> Bước 3 (GĐ2 Chấm điểm & Chọn) -> Bước 4 (GĐ3 Task Network).'
         )
     results = report.get('results') or {}
     pipeline = report.get('pipeline') or {}
+    active_mode = report.get('scoring_mode') or pipeline.get('scoring_mode') or scoring_mode or 'hybrid'
     pool_n = pipeline.get('pool_size') or (report.get('metadata') or {}).get('candidate_count') or '?'
     topk_n = pipeline.get('topk_count', 32)
     sel = results.get('selected') or {}
@@ -281,7 +323,7 @@ def step_narration(step: int, report: dict | None, query: dict | None, dataset_t
         s_r1 = sel.get('stage1_rank')
         s_label = sel.get('context_label') or '-'
         extra = (
-            f' Ảnh mà Selector chọn ở bước sau ("{s_label}") đang nằm ở hạng #{s_r1} trong danh sách cosine này.'
+            f' Ảnh được chọn ở GĐ2 ("{s_label}") đang nằm ở hạng #{s_r1} trong danh sách cosine này.'
             if s_r1 is not None
             else ''
         )
@@ -293,26 +335,31 @@ def step_narration(step: int, report: dict | None, query: dict | None, dataset_t
     if step == 3:
         s_label = sel.get('context_label') or '-'
         s_r1 = sel.get('stage1_rank')
-        s_score = sel.get('selector_score')
+        s_score = format_stage2_score(sel.get('selector_score'), active_mode)
+        s_norm = sel.get('selector_norm')
+        norm_pct = sel.get('norm_percentile')
         f_label = frozen.get('context_label') or '-'
-        s_score_str = f'{s_score:.2f}' if isinstance(s_score, (int, float)) else '-'
+        norm_note = (
+            f' | ||e_c||={s_norm:.2f} (percentile {norm_pct * 100:.0f}% trong Top-{topk_n})'
+            if isinstance(s_norm, (int, float)) and isinstance(norm_pct, (int, float))
+            else ''
+        )
         same_as_top1 = (s_r1 == 1)
         contrast = (
-            'Ở ảnh này, Selector đồng thuận với GĐ1 #1.'
+            'GĐ2 giữ nguyên lựa chọn hàng đầu từ GĐ1 #1.'
             if same_as_top1
-            else f'Selector ĐẢO HẠNG: đẩy ảnh "{s_label}" từ hạng #{s_r1} (GĐ1) lên #1 (vượt qua ảnh gần nhất "{f_label}").'
+            else f'GĐ2 ĐẢO HẠNG: đẩy ảnh "{s_label}" từ hạng #{s_r1} (GĐ1) lên #1 (vượt qua "{f_label}").'
         )
         return (
-            f'BƯỚC 3 - GIAI ĐOẠN 2 (LEARNED SELECTOR): Selector đã học chấm điểm lại {topk_n} ứng viên theo '
-            f'tích vô hướng đặc trưng đã học ({report.get("selector_ms", 0):.1f} ms) và chọn "{s_label}" '
-            f'(điểm {s_score_str}). {contrast} Lưu ý: nhãn của ảnh context không được cấp cho mô hình.'
+            f'BƯỚC 3 - GIAI ĐOẠN 2 ({scoring_mode_label(active_mode)}): chấm điểm lại {topk_n} ứng viên '
+            f'({report.get("selector_ms", 0):.1f} ms) và chọn "{s_label}" ({s_score}{norm_note}). {contrast}'
         )
     sel_pred = sel.get('prediction') or '-'
     sel_p = (sel.get('top5') or [{}])[0].get('probability', 0.0) * 100.0
     no_pred = no_ctx.get('prediction') or '-'
     no_p = (no_ctx.get('top5') or [{}])[0].get('probability', 0.0) * 100.0
     return (
-        f'BƯỚC 4 - GIAI ĐOẠN 3 (TASK NETWORK role_v2 & SO SÁNH): Task Network ghép patch của Query với patch của '
-        f'Context (đã cộng vector vai trò role_v2) -> dự đoán "{sel_pred}" ({sel_p:.1f}%), so với khi bỏ context '
-        f'trên cùng weights là "{no_pred}" ({no_p:.1f}%). Bấm từng hàng trong bảng bên dưới để đổi góc nhìn.'
+        f'BƯỚC 4 - GIAI ĐOẠN 3 (TASK NETWORK role_v2 & SO SÁNH): Task Network ghép patch Query + Context '
+        f'({scoring_mode_label(active_mode)}) -> dự đoán "{sel_pred}" ({sel_p:.1f}%), so với bỏ context '
+        f'trên cùng weights là "{no_pred}" ({no_p:.1f}%). Bấm từng hàng trong bảng để đối chiếu.'
     )
