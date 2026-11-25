@@ -2,21 +2,31 @@ import ast
 import hashlib
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest import mock
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'scripts'))
-from build_advantage_colab import EXPECTED_BUNDLE, make_colab
-from build_advantage_notebooks import bundle_source
+from build_advantage_colab import CONTROL_NOTEBOOK, EXPECTED_BUNDLE, make_colab, read_control_source
+from build_advantage_notebooks import make_notebook
 
 
 class AdvantageColabTest(unittest.TestCase):
-    def test_bundle_is_same_as_completed_control(self):
-        raw = bundle_source(ROOT)
+    @unittest.skipUnless(CONTROL_NOTEBOOK.is_file(), 'Original microbatch notebook is a local artifact')
+    def test_archived_source_is_same_as_completed_control(self):
+        raw = read_control_source(CONTROL_NOTEBOOK)
         self.assertEqual(hashlib.sha256(raw).hexdigest(), EXPECTED_BUNDLE)
-        nb = make_colab(raw)
+
+    def test_builder_reads_embedded_source_and_generates_colab(self):
+        import json
+        raw = b'embedded source fixture'
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/'control.ipynb'
+            path.write_text(json.dumps(make_notebook(raw, 'microbatch')), encoding='utf-8')
+            self.assertEqual(read_control_source(path), raw)
+        nb = self.make_test_colab(raw)
         self.assertEqual(nb['metadata']['accelerator'], 'GPU')
         code = '\n'.join(''.join(c['source']) for c in nb['cells'] if c['cell_type']=='code')
         for cell in nb['cells']:
@@ -36,8 +46,12 @@ class AdvantageColabTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Source changed'):
             make_colab(b'not the matched control source')
 
+    def make_test_colab(self, raw):
+        with mock.patch('build_advantage_colab.EXPECTED_BUNDLE', hashlib.sha256(raw).hexdigest()):
+            return make_colab(raw)
+
     def preflight_code(self):
-        code = ''.join(make_colab(bundle_source(ROOT))['cells'][2]['source'])
+        code = ''.join(self.make_test_colab(b'embedded source fixture')['cells'][2]['source'])
         return code[:code.index('def install_live')]
 
     def test_cpu_runtime_refused_before_install(self):

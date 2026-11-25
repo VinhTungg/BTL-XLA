@@ -1,14 +1,28 @@
 """Package the unchanged matched pilot for Colab, with persistent Drive output."""
 import ast
+import base64
 import hashlib
 import json
 from pathlib import Path
+import re
 import zipfile
 
 from build_advantage_notebooks import ROOT, bundle_source, make_notebook
 
 EXPECTED_BUNDLE = '1d85d0bbb17201c08e38b7428f720fccfe2859cc94cd0b256fac1103c7c9dce5'
 EXPECTED_ENCODER = 'ed59d392f6e78e7faeb6ffd9b6421ddf864725b610f10d986a179f417d84ec64'
+CONTROL_NOTEBOOK = ROOT/'artifacts/effective_batch_pilot/Advantage_microbatch_seed44.ipynb'
+
+
+def read_control_source(path):
+    notebook = json.loads(path.read_text(encoding='utf-8'))
+    for cell in notebook['cells']:
+        if cell['cell_type'] != 'code':
+            continue
+        match = re.search(r"^raw = base64\.b64decode\('([A-Za-z0-9+/=]+)'\)$", ''.join(cell['source']), re.MULTILINE)
+        if match:
+            return base64.b64decode(match[1], validate=True)
+    raise ValueError(f'No embedded source bundle in {path}')
 
 
 def make_colab(raw):
@@ -138,8 +152,12 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', type=Path, required=True, help='Verified Kaggle results (3).zip')
+    parser.add_argument('--source-notebook', type=Path, help='Original notebook of the matched microbatch control')
     args = parser.parse_args()
-    raw = bundle_source(ROOT)
+    source = args.source_notebook
+    if source is None and CONTROL_NOTEBOOK.is_file():
+        source = CONTROL_NOTEBOOK
+    raw = read_control_source(source) if source is not None else bundle_source(ROOT)
     notebook = make_colab(raw)
     output = ROOT/'artifacts/effective_batch_pilot'
     notebook_path = output/'Advantage_effective_batch_seed44_Colab.ipynb'

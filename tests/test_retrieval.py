@@ -201,6 +201,27 @@ class RetrievalTest(unittest.TestCase):
             self.assertEqual(sample["candidates"].shape, (1, 3, 32, 32))
             self.assertTrue(0.0 <= sample["similarity_scores"].item() <= 1.0 or -1.0 <= sample["similarity_scores"].item() <= 1.0)
 
+    def test_similarity_can_retrieve_from_a_separate_view_of_the_query(self) -> None:
+        encoder = torch.nn.Flatten()
+        views = torch.eye(2).reshape(2, 2, 1, 1)
+        labels = torch.arange(2)
+        pool = TensorDataset(views, labels)
+        augmented = TensorDataset(views.flip(0), labels)
+        retriever = CosineSimilarityRetriever(torch.eye(2), labels, labels, pool)
+        data = SimilarityContextDataset(
+            augmented, pool, retriever, encoder,
+            retrieval_query_dataset=TensorDataset(views, labels),
+        )
+        sample = data[0]
+        self.assertTrue(torch.equal(sample["query"], views[1]))
+        self.assertEqual(sample["candidate_indices"].item(), 0)
+        self.assertTrue(torch.equal(sample["candidates"][0], views[0]))
+        with self.assertRaisesRegex(ValueError, "must match"):
+            SimilarityContextDataset(
+                augmented, pool, retriever, encoder,
+                retrieval_query_dataset=TensorDataset(views[:1], labels[:1]),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

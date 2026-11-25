@@ -34,6 +34,7 @@ from .device import configure_stdout, resolve_device
 from .metrics import PeakMemoryMonitor
 from .model import (
     TASK_NETWORK_VERSIONS,
+    PairedLogits,
     TACSModel,
     backbone_embedding_dim,
     create_task_network,
@@ -938,6 +939,7 @@ def _evaluate_impl(
     criterion: Any,
     device: torch.device,
     amp_enabled: bool = False,
+    compare_no_context: bool = False,
 ) -> dict[str, float]:
     """Đánh giá mô hình (không cập nhật gradient)."""
     model.eval()
@@ -950,6 +952,7 @@ def _evaluate_impl(
     total_loss = 0.0
     correct = 0
     total = 0
+    no_context_correct = context_helped = context_hurt = 0
 
     with torch.no_grad():
         for batch in loader:
@@ -992,7 +995,15 @@ def _evaluate_impl(
             total_loss += loss.item() * query.size(0)
             pred_logits = logits.context_logits if hasattr(logits, "context_logits") else logits
             preds = pred_logits.argmax(dim=-1)
-            correct += (preds == target).sum().item()
+            matches = preds == target
+            correct += matches.sum().item()
+            if compare_no_context:
+                if not isinstance(logits, PairedLogits):
+                    raise TypeError("Paired context evaluation requires PairedLogits")
+                no_context_matches = logits.no_context_logits.argmax(dim=-1) == target
+                no_context_correct += no_context_matches.sum().item()
+                context_helped += (matches & ~no_context_matches).sum().item()
+                context_hurt += (~matches & no_context_matches).sum().item()
             total += query.size(0)
 
     model_time = time.perf_counter() - loop_started_at
@@ -1007,7 +1018,7 @@ def _evaluate_impl(
     acc = correct / max(1, total)
     throughput = total / max(1e-5, end_to_end_time)
 
-    return {
+    result = {
         "loss": round(avg_loss, 4),
         "accuracy": round(acc, 4),
         "throughput": round(throughput, 2),
@@ -1020,6 +1031,13 @@ def _evaluate_impl(
             4,
         ),
     }
+    if compare_no_context:
+        result.update(
+            no_context_accuracy=round(no_context_correct / max(1, total), 4),
+            context_helped=context_helped,
+            context_hurt=context_hurt,
+        )
+    return result
 
 
 def evaluate(
@@ -1028,11 +1046,14 @@ def evaluate(
     criterion: Any,
     device: torch.device,
     amp_enabled: bool = False,
+    *,
+    compare_no_context: bool = False,
 ) -> dict[str, float | None]:
     """Evaluate one split and include peak process/CUDA memory."""
     with PeakMemoryMonitor(device) as memory_monitor:
         result = _evaluate_impl(
-            model, loader, criterion, device, amp_enabled=amp_enabled
+            model, loader, criterion, device, amp_enabled=amp_enabled,
+            compare_no_context=compare_no_context,
         )
     return {**result, **memory_monitor.result().as_dict()}
 

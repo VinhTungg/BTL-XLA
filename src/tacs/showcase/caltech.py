@@ -119,6 +119,7 @@ class CaltechDemoEngine(DemoEngine):
             top5=[dict(label=self.dataset.classes[int(i)],probability=float(p))
                   for i,p in zip(labels[0],probabilities[0])],
             task_ms=elapsed,context_index=None,context_label=None,
+            stage1_rank=None,stage2_rank=None,cosine_score=None,selector_score=None,
             checkpoint_sha256=CHECKPOINTS['no_context'],model_group='independent_no_context')
         report['comparison_ms']+=elapsed
         report['warning']=('First four rows intervene on the same Two-Stage task weights; '

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import math
 
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -15,12 +16,18 @@ class TACSLossOutput:
 
 
 class TACSLoss(nn.Module):
-    """Hybrid objective from equations (8)-(10) of the TACS paper."""
+    """TACS hybrid objective with an optional supervised query-only term."""
 
-    def __init__(self, policy_weight: float = 1.0, eps: float = 1e-6) -> None:
+    def __init__(
+        self, policy_weight: float = 1.0, eps: float = 1e-6, *,
+        aux_query_weight: float = 0.0,
+    ) -> None:
         super().__init__()
+        if not math.isfinite(aux_query_weight) or aux_query_weight < 0:
+            raise ValueError("aux_query_weight must be finite and non-negative")
         self.policy_weight = policy_weight
         self.eps = eps
+        self.aux_query_weight = aux_query_weight
 
     @staticmethod
     def rewards(output: TACSOutput, targets: Tensor) -> Tensor:
@@ -46,4 +53,6 @@ class TACSLoss(nn.Module):
         policy_loss = -(chosen_log_probability * advantage).mean()
         task_loss = context_loss.mean()
         total = task_loss + self.policy_weight * policy_loss
+        if self.aux_query_weight > 0:
+            total = total + self.aux_query_weight * no_context_loss.mean()
         return TACSLossOutput(total, task_loss, policy_loss, reward.mean())

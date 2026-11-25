@@ -219,6 +219,8 @@ class SimilarityContextDataset(Dataset):
         encoder: nn.Module | None = None,
         device: torch.device | str = "cpu",
         batch_size: int = 128,
+        *,
+        retrieval_query_dataset: Dataset | None = None,
     ) -> None:
         self.query_dataset = query_dataset
         self.candidate_dataset = candidate_dataset
@@ -226,21 +228,29 @@ class SimilarityContextDataset(Dataset):
 
         # Tiền tính toán mapping top-1 candidate cho toàn bộ query để tăng tốc training
         self.cached_assignments: list[tuple[int, float]] = []
+        if retrieval_query_dataset is not None and (
+            encoder is None or len(retrieval_query_dataset) != len(query_dataset)
+        ):
+            raise ValueError("Retrieval queries require an encoder and must match the training rows")
         if encoder is not None:
-            self._precompute_assignments(encoder, device=device, batch_size=batch_size)
+            self._precompute_assignments(
+                encoder, device=device, batch_size=batch_size,
+                retrieval_query_dataset=retrieval_query_dataset,
+            )
 
     def _precompute_assignments(
         self,
         encoder: nn.Module,
         device: torch.device | str = "cpu",
         batch_size: int = 128,
+        retrieval_query_dataset: Dataset | None = None,
     ) -> None:
         device = torch.device(device)
         encoder = encoder.to(device)
         encoder.eval()
 
         loader = DataLoader(
-            self.query_dataset,
+            self.query_dataset if retrieval_query_dataset is None else retrieval_query_dataset,
             batch_size=batch_size,
             shuffle=False,
             num_workers=0,

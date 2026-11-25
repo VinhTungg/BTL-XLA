@@ -11,6 +11,7 @@ from PIL import Image
 from torch.utils.data import Dataset, Subset
 
 PROTOCOL = 'caltech101_demo_19query_6pool_5val_rest_test_v1'
+TRAIN_PER_CLASS = 19
 
 
 def digest(path):
@@ -56,8 +57,8 @@ def make_split(inventory, seed=42):
     for target in range(len(inventory['classes'])):
         indices = [i for i, row in enumerate(inventory['items']) if row['target'] == target]
         rng.shuffle(indices)
-        split['query_train'].extend(indices[:19])
-        split['candidate_pool'].extend(indices[19:25])
+        split['query_train'].extend(indices[:TRAIN_PER_CLASS])
+        split['candidate_pool'].extend(indices[TRAIN_PER_CLASS:25])
         split['validation'].extend(indices[25:30])
         split['test'].extend(indices[30:])
     validate_split(split, inventory)
@@ -77,7 +78,7 @@ def validate_split(split, inventory):
             raise ValueError('Duplicate/overlapping split roles')
         seen.update(indices)
         counts = Counter(inventory['items'][i]['target'] for i in indices)
-        required = dict(query_train=19, candidate_pool=6, validation=5).get(role)
+        required = dict(query_train=TRAIN_PER_CLASS, candidate_pool=6, validation=5).get(role)
         if any((counts[t] != required if required is not None else counts[t] < 1)
                for t in range(len(inventory['classes']))):
             raise ValueError(f'Wrong class balance for {role}')
@@ -103,6 +104,37 @@ def prepare(data_root, split_file, download=False):
         split = make_split(inventory)
         atomic_json(path, split)
     return inventory, split
+
+
+def prepare_train_subset(output_root, inventory, split, train_per_class):
+    """Select a fixed prefix per class from the already shuffled training split."""
+    subset_path = Path(output_root)/'train_subset.json'
+    if train_per_class is None:
+        if subset_path.exists():
+            raise ValueError('This output root has a training subset; supply its --train-per-class')
+        return split['query_train'], {}
+    if type(train_per_class) is not int or not 1 <= train_per_class <= TRAIN_PER_CLASS:
+        raise ValueError(f'train-per-class must be between 1 and {TRAIN_PER_CLASS}')
+
+    counts = Counter()
+    indices = []
+    for idx in split['query_train']:
+        target = inventory['items'][idx]['target']
+        if counts[target] < train_per_class:
+            counts[target] += 1
+            indices.append(idx)
+    if len(counts) != len(inventory['classes']) or set(counts.values()) != {train_per_class}:
+        raise ValueError('Cannot select the requested number of training images for every class')
+    subset = dict(train_per_class=train_per_class, selection='prefix_per_class_in_split_order',
+                  split_sha256=digest(subset_path.parent/'split.json'), query_train=indices)
+    if subset_path.is_file():
+        if json.loads(subset_path.read_text(encoding='utf-8')) != subset:
+            raise ValueError('Training subset differs from this output root; use a new output root')
+    else:
+        if any(subset_path.parent.glob('*/experiment_manifest.json')):
+            raise ValueError('Training runs already exist here; use a new output root for a new subset')
+        atomic_json(subset_path, subset)
+    return indices, dict(train_per_class=train_per_class, train_subset_sha256=digest(subset_path))
 
 
 class CaltechImages(Dataset):
@@ -132,8 +164,9 @@ def transforms(train=False):
     return T.Compose([*spatial, T.ToTensor(), T.Normalize((.485,.456,.406),(.229,.224,.225))])
 
 
-def datasets(data_root, inventory, split):
+def datasets(data_root, inventory, split, *, train_indices=None):
     training = CaltechImages(data_root, inventory, transforms(True))
     evaluation = CaltechImages(data_root, inventory, transforms(False))
-    return (Subset(training, split['query_train']), Subset(evaluation, split['candidate_pool']),
+    return (Subset(training, split['query_train'] if train_indices is None else train_indices),
+            Subset(evaluation, split['candidate_pool']),
             Subset(evaluation, split['validation']))

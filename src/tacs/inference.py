@@ -136,7 +136,9 @@ class DemoEngine:
         q = F.normalize(self.standard(query).float(), dim=-1)
         if not bool(torch.isfinite(q).all()) or bool((q.norm(dim=-1) == 0).any()):
             raise ValueError('Non-finite/zero query embedding')
-        topk = (q @ self.frozen.float().T).topk(min(self.cfg.topk_candidates, len(self.pool)), dim=-1).indices
+        topk_out = (q @ self.frozen.float().T).topk(min(self.cfg.topk_candidates, len(self.pool)), dim=-1)
+        topk = topk_out.indices
+        cosine_values = topk_out.values
         self._sync()
         retrieved_at = time.perf_counter()
         with _autocast_context(self.device, self.amp):
@@ -148,7 +150,8 @@ class DemoEngine:
         self._sync()
         selected_at = time.perf_counter()
         generator = torch.Generator().manual_seed(random_seed)
-        random_position = int(topk[0, int(torch.randint(topk.shape[1], (1,), generator=generator))])
+        random_local = int(torch.randint(topk.shape[1], (1,), generator=generator))
+        random_position = int(topk[0, random_local])
         interventions = dict(selected=selected, random=random_position,
                              frozen_cosine=int(topk[0, 0]), no_context=None)
         results = {}
@@ -166,12 +169,50 @@ class DemoEngine:
                         top5=[dict(label=self.dataset.classes[int(i)], probability=float(p))
                               for i, p in zip(labels[0], probabilities[0])],
                         task_ms=1000*(time.perf_counter()-t), context_index=None,
-                        context_label=None)
+                        context_label=None, stage1_rank=None, stage2_rank=None,
+                        cosine_score=None, selector_score=None)
             if position is not None:
                 index = self.split.candidate_pool[position]
                 item.update(context_index=index, context_label=self.dataset.classes[self.dataset.targets[index]])
             results[name] = item
-        return dict(metadata=self.metadata, results=results,
+        comparison_ms = 1000*(time.perf_counter()-start)
+        # Build Stage 1 -> Stage 2 candidate trace from already-computed scores without altering inference.
+        topk_positions = [int(x) for x in topk[0].detach().cpu().tolist()]
+        cos_list = [float(x) for x in cosine_values[0].detach().cpu().tolist()]
+        sel_list = [float(x) for x in choice[0][0].float().detach().cpu().tolist()]
+        order_stage2 = sorted(range(len(topk_positions)), key=lambda i: (-sel_list[i], i))
+        stage2_ranks = {idx: rank for rank, idx in enumerate(order_stage2, start=1)}
+        candidates = []
+        for idx, (pool_pos, cos_val, sel_val) in enumerate(zip(topk_positions, cos_list, sel_list)):
+            dataset_index = int(self.split.candidate_pool[pool_pos])
+            candidates.append(dict(
+                pool_position=pool_pos,
+                dataset_index=dataset_index,
+                label=self.dataset.classes[self.dataset.targets[dataset_index]],
+                cosine_score=cos_val,
+                stage1_rank=idx + 1,
+                selector_score=sel_val,
+                stage2_rank=stage2_ranks[idx],
+                is_selected=(idx == local),
+                is_frozen_top1=(idx == 0),
+                is_random=(idx == random_local),
+            ))
+        for key, local_idx in (('selected', local), ('frozen_cosine', 0), ('random', random_local)):
+            cand = candidates[local_idx]
+            results[key].update(
+                stage1_rank=cand['stage1_rank'],
+                stage2_rank=cand['stage2_rank'],
+                cosine_score=cand['cosine_score'],
+                selector_score=cand['selector_score'],
+            )
+        pipeline = dict(
+            pool_size=len(self.pool),
+            topk_count=len(candidates),
+            selected_stage1_rank=local + 1,
+            random_stage1_rank=random_local + 1,
+            candidates=candidates,
+        )
+        return dict(metadata=self.metadata, results=results, pipeline=pipeline,
                     retrieval_ms=1000*(retrieved_at-start), selector_ms=1000*(selected_at-retrieved_at),
-                    comparison_ms=1000*(time.perf_counter()-start),
+                    comparison_ms=comparison_ms,
                     warning='Same task weights, not independently trained baselines. Confidence is not calibrated. Batch=1 demo timing is not a formal benchmark.')

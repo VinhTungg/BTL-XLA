@@ -362,9 +362,13 @@ class TaskAlignedSelector(nn.Module):
 
 
 @dataclass
-class TACSOutput:
+class PairedLogits:
     context_logits: Tensor
     no_context_logits: Tensor
+
+
+@dataclass
+class TACSOutput(PairedLogits):
     selector_scores: Tensor
     selection_weights: Tensor
     selector_temperature: float

@@ -8,7 +8,7 @@ from tacs import (
     TACSLoss,
     TACSModel,
 )
-from tacs.model import TaskAlignedSelector
+from tacs.model import TACSOutput, TaskAlignedSelector
 
 
 class PixelVectorEncoder(torch.nn.Module):
@@ -48,6 +48,36 @@ class TACSModelTest(unittest.TestCase):
             sum(gradient.abs().sum().item() for gradient in task_gradients),
             0.0,
         )
+
+    def test_query_only_loss_is_opt_in_and_reward_stays_detached(self) -> None:
+        output = TACSOutput(
+            context_logits=torch.randn(3, 4, requires_grad=True),
+            no_context_logits=torch.randn(3, 4, requires_grad=True),
+            selector_scores=torch.randn(3, 2, requires_grad=True),
+            selection_weights=torch.tensor([[1., 0.], [0., 1.], [1., 0.]]),
+            selector_temperature=0.1,
+        )
+        original = TACSLoss()(output, self.targets)
+        disabled = TACSLoss(aux_query_weight=0.0)(output, self.targets)
+        self.assertTrue(torch.equal(original.total, disabled.total))
+        self.assertIsNone(torch.autograd.grad(
+            disabled.total, output.no_context_logits, allow_unused=True
+        )[0])
+
+        anchored = TACSLoss(aux_query_weight=0.5)(output, self.targets)
+        query_loss = torch.nn.functional.cross_entropy(output.no_context_logits, self.targets)
+        torch.testing.assert_close(anchored.total, original.total + 0.5 * query_loss)
+        torch.testing.assert_close(anchored.mean_reward, original.mean_reward)
+        self.assertFalse(anchored.mean_reward.requires_grad)
+        query_policy_grad, context_policy_grad = torch.autograd.grad(
+            anchored.policy, (output.no_context_logits, output.context_logits), allow_unused=True,
+            retain_graph=True,
+        )
+        self.assertIsNone(query_policy_grad)
+        self.assertIsNone(context_policy_grad)
+        query_grad = torch.autograd.grad(anchored.total, output.no_context_logits)[0]
+        expected_grad = torch.autograd.grad(0.5 * query_loss, output.no_context_logits)[0]
+        torch.testing.assert_close(query_grad, expected_grad)
 
     def test_embedding_bank_proxy_backpropagates_task_loss_to_selector(self) -> None:
         full_pool = torch.randn(11, 16)
